@@ -13,6 +13,7 @@ const state = {
   devices: [],
   searchQuery: "",
   activeFilter: "all",
+  activeLoop: "",
   highlightedDeviceId: null,
   scanner: null,
   scannerRunning: false,
@@ -26,6 +27,8 @@ const elements = {
   scannerButton: document.getElementById("scannerButton"),
 
   filterButtons: Array.from(document.querySelectorAll(".filter-button")),
+
+  loopFilterGroup: document.getElementById("loopFilterGroup"),
 
   totalCount: document.getElementById("totalCount"),
   printedCount: document.getElementById("printedCount"),
@@ -120,6 +123,14 @@ function normalizeHeaderName(value) {
     .replace(/\s+/g, " ");
 }
 
+function getDeviceLoop(address) {
+  const normalizedAddress = String(address || "").trim();
+
+  const match = normalizedAddress.match(/^[^.]+\.(\d+)\./);
+
+  return match ? match[1] : "";
+}
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -150,6 +161,58 @@ function parseBooleanCsvValue(value) {
   return ["true", "1", "yes", "y", "да", "taip", "checked"].includes(
     normalizedValue,
   );
+}
+
+function getAvailableLoops() {
+  return Array.from(
+    new Set(
+      state.devices
+        .map((device) => getDeviceLoop(device.address))
+        .filter(Boolean),
+    ),
+  ).sort((firstLoop, secondLoop) => {
+    return firstLoop.localeCompare(secondLoop, undefined, {
+      numeric: true,
+      sensitivity: "base",
+    });
+  });
+}
+
+function createLoopFilterButton(loopValue, label, isActive) {
+  return `
+    <button
+      class="filter-button${isActive ? " is-active" : ""}"
+      type="button"
+      data-loop="${escapeHtml(loopValue)}"
+      aria-pressed="${String(isActive)}"
+    >
+      ${escapeHtml(label)}
+    </button>
+  `;
+}
+
+function renderLoopFilters() {
+  const loops = getAvailableLoops();
+
+  if (state.activeLoop && !loops.includes(state.activeLoop)) {
+    state.activeLoop = "";
+  }
+
+  const buttons = [
+    createLoopFilterButton("", "Все петли", state.activeLoop === ""),
+  ];
+
+  loops.forEach((loopValue) => {
+    buttons.push(
+      createLoopFilterButton(
+        loopValue,
+        loopValue,
+        state.activeLoop === loopValue,
+      ),
+    );
+  });
+
+  elements.loopFilterGroup.innerHTML = buttons.join("");
 }
 
 function sortDevices(devices) {
@@ -189,6 +252,13 @@ function getFilteredDevices() {
       normalizeSearchValue(device.description).includes(normalizedQuery);
 
     if (!matchesSearch) {
+      return false;
+    }
+
+    if (
+      state.activeLoop &&
+      getDeviceLoop(device.address) !== state.activeLoop
+    ) {
       return false;
     }
 
@@ -411,6 +481,7 @@ function renderSearchControls() {
 function render() {
   renderStatistics();
   renderSearchControls();
+  renderLoopFilters();
   renderDevices();
 }
 
@@ -697,6 +768,7 @@ async function importCsvFile(file) {
 
     state.searchQuery = "";
     state.activeFilter = "all";
+    state.activeLoop = "";
     state.highlightedDeviceId = null;
 
     elements.searchInput.value = "";
@@ -798,6 +870,7 @@ async function clearAllData() {
     state.devices = [];
     state.searchQuery = "";
     state.activeFilter = "all";
+    state.activeLoop = "";
     state.highlightedDeviceId = null;
 
     elements.searchInput.value = "";
@@ -970,6 +1043,7 @@ async function searchByQrText(qrText) {
   const foundDevice = findDeviceByExtractedId(extractedId);
 
   state.searchQuery = extractedId;
+  state.activeLoop = "";
   state.activeFilter = "all";
 
   elements.searchInput.value = extractedId;
@@ -1137,6 +1211,7 @@ async function closeScanner() {
 function resetSearchAndFilters() {
   state.searchQuery = "";
   state.activeFilter = "all";
+  state.activeLoop = "";
   state.highlightedDeviceId = null;
 
   elements.searchInput.value = "";
@@ -1181,6 +1256,25 @@ function handleStatusChange(event) {
   updateDeviceStatus(deviceId, statusField, target.checked);
 }
 
+function handleLoopFilterClick(event) {
+  const clickedElement = event.target;
+
+  if (!(clickedElement instanceof Element)) {
+    return;
+  }
+
+  const button = clickedElement.closest("button[data-loop]");
+
+  if (!button || !elements.loopFilterGroup.contains(button)) {
+    return;
+  }
+
+  state.activeLoop = button.getAttribute("data-loop") || "";
+  state.highlightedDeviceId = null;
+
+  render();
+}
+
 function bindEvents() {
   elements.searchInput.addEventListener("input", handleSearchInput);
 
@@ -1193,6 +1287,8 @@ function bindEvents() {
 
     render();
   });
+
+  elements.loopFilterGroup.addEventListener("click", handleLoopFilterClick);
 
   elements.filterButtons.forEach((button) => {
     button.addEventListener("click", handleFilterClick);
