@@ -193,14 +193,17 @@ function getFilteredDevices() {
     }
 
     switch (state.activeFilter) {
+      case "printed":
+        return device.printed;
+
       case "not-printed":
         return !device.printed;
 
+      case "installed":
+        return device.installed;
+
       case "not-installed":
         return !device.installed;
-
-      case "completed":
-        return device.printed && device.installed;
 
       case "all":
       default:
