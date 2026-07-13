@@ -1,12 +1,12 @@
 "use strict";
 
-const CACHE_NAME = "fire-device-tracker-v7";
+const CACHE_NAME = "fire-device-tracker-v8";
 
 const APP_SHELL_FILES = [
   "./",
   "./index.html",
-  "./styles.css?v=7",
-  "./app.js?v=7",
+  "./styles.css?v=8",
+  "./app.js?v=8",
   "./manifest.webmanifest",
   "./html5-qrcode.min.js",
 ];
@@ -45,7 +45,7 @@ self.addEventListener("activate", (event) => {
   );
 });
 
-self.addEventListener("fetch", (event) => {
+self.addEventListener("fetch", (event) => {self.addEventListener("fetch", (event) => {
   const request = event.request;
 
   if (request.method !== "GET") {
@@ -60,51 +60,57 @@ self.addEventListener("fetch", (event) => {
 
   if (request.mode === "navigate") {
     event.respondWith(
-      fetch(request)
+      fetch(request, {
+        cache: "no-store"
+      })
         .then((networkResponse) => {
-          const responseCopy = networkResponse.clone();
+          const responseCopy =
+            networkResponse.clone();
 
           caches.open(CACHE_NAME).then((cache) => {
-            cache.put("./index.html", responseCopy);
+            cache.put(
+              "./index.html",
+              responseCopy
+            );
           });
 
           return networkResponse;
         })
         .catch(async () => {
           return (
-            (await caches.match(request)) ||
             (await caches.match("./index.html")) ||
             (await caches.match("./"))
           );
-        }),
+        })
     );
 
     return;
   }
 
   event.respondWith(
-    caches.match(request).then((cachedResponse) => {
-      if (cachedResponse) {
-        return cachedResponse;
-      }
-
-      return fetch(request).then((networkResponse) => {
+    fetch(request)
+      .then((networkResponse) => {
         if (
           !networkResponse ||
-          networkResponse.status !== 200 ||
-          networkResponse.type !== "basic"
+          networkResponse.status !== 200
         ) {
           return networkResponse;
         }
 
-        const responseCopy = networkResponse.clone();
+        const responseCopy =
+          networkResponse.clone();
 
         caches.open(CACHE_NAME).then((cache) => {
-          cache.put(request, responseCopy);
+          cache.put(
+            request,
+            responseCopy
+          );
         });
 
         return networkResponse;
-      });
-    }),
+      })
+      .catch(() => {
+        return caches.match(request);
+      })
   );
 });

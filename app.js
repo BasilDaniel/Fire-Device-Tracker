@@ -1374,8 +1374,23 @@ async function registerServiceWorker() {
     return;
   }
 
+  let reloadingForUpdate = false;
+
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (reloadingForUpdate) {
+      return;
+    }
+
+    reloadingForUpdate = true;
+    window.location.reload();
+  });
+
   try {
-    await navigator.serviceWorker.register("./sw.js?v=7");
+    const registration = await navigator.serviceWorker.register("./sw.js", {
+      updateViaCache: "none",
+    });
+
+    await registration.update();
   } catch (error) {
     console.error("Service Worker не зарегистрирован:", error);
   }
