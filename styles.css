@@ -263,6 +263,155 @@ th {
   outline-offset: -3px;
   background: #eff6ff !important;
 }
+/* QR scanner */
+
+.scanner-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+
+  width: 100%;
+  height: 100vh;
+  height: 100dvh;
+
+  overflow: hidden;
+  overscroll-behavior: none;
+
+  background: #000;
+}
+
+.scanner-modal {
+  display: flex;
+  flex-direction: column;
+
+  width: 100%;
+  height: 100vh;
+  height: 100dvh;
+  max-height: none;
+
+  margin: 0;
+  padding: max(12px, env(safe-area-inset-top)) 12px
+    max(12px, env(safe-area-inset-bottom));
+
+  overflow: hidden;
+
+  background: #fff;
+  border-radius: 0;
+}
+
+.scanner-head {
+  position: relative;
+  z-index: 2;
+  flex: 0 0 auto;
+
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+
+  margin-bottom: 10px;
+}
+
+.scanner-head h2 {
+  margin: 0;
+  font-size: 19px;
+}
+
+.scanner-head p {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.scanner-close {
+  flex: 0 0 44px;
+}
+
+.scanner-container {
+  position: relative;
+  flex: 1 1 auto;
+
+  width: 100%;
+  min-height: 0;
+  overflow: hidden;
+
+  background: #000;
+  border-radius: 14px;
+}
+
+#qrReader {
+  position: absolute;
+  inset: 0;
+
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+#qrReader > div {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+#qrReader video {
+  position: absolute;
+  inset: 0;
+
+  width: 100% !important;
+  height: 100% !important;
+  max-height: none !important;
+
+  object-fit: cover;
+}
+
+#qrReader__scan_region {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+#qrReader__scan_region img {
+  display: none !important;
+}
+
+#qrReader__dashboard,
+#qrReader__dashboard_section,
+#qrReader__dashboard_section_csr {
+  display: none !important;
+}
+
+.aim-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  pointer-events: none;
+}
+
+.aim-box {
+  width: min(190px, 50vw);
+  height: min(190px, 50vw);
+
+  border: 4px solid #fff;
+  border-radius: 16px;
+
+  box-shadow:
+    0 0 0 9999px rgba(0, 0, 0, 0.48),
+    0 0 18px rgba(255, 255, 255, 0.55);
+}
+
+.scanner-help {
+  flex: 0 0 auto;
+
+  margin: 10px 4px 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.3;
+  text-align: center;
+}
 @media (max-width: 760px) {
   .search-group {
     grid-template-columns: 1fr auto;
