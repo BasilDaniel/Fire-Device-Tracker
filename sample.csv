@@ -1,0 +1,3 @@
+Block,Address,Device ID,Device type,Description,Printed,Installed
+C1-4-2,C1.02.040,1627496628,Smoke detector,"Dūmų jutiklis, tech. aukštas, ašys 19-20/B-A",false,false
+C1-4-2,C1.02.041,1627497501,Smoke detector,"Dūmų jutiklis, tech. aukštas, ašys 20-21/C-B1",true,false
