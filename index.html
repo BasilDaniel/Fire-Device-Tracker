@@ -1,19 +1,275 @@
-<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#111827"><title>Fire Device Tracker</title><link rel="manifest" href="manifest.webmanifest"><link rel="stylesheet" href="styles.css?v=3"></head><body><header><div><h1>Fire Device Tracker</h1><p>Печать и монтаж адресов</p></div><button id="installBtn" class="hidden">Установить</button></header><main><section class="toolbar"><div class="search-group"><input id="search" type="search" placeholder="Поиск по адресу, ID, блоку..."><button id="scanBtn" class="scan-btn" type="button">📷 QR</button></div><select id="blockFilter"><option value="">Все блоки</option></select><select id="statusFilter"><option value="">Все статусы</option><option value="not_printed">Не распечатано</option><option value="printed">Распечатано</option><option value="installed">Наклеено</option></select></section><section class="summary"><div><strong id="totalCount">0</strong><span>Всего</span></div><div><strong id="printedCount">0</strong><span>Распечатано</span></div><div><strong id="installedCount">0</strong><span>Наклеено</span></div></section><section class="data-menu-bar">
-  <button id="openDataMenuBtn" class="secondary">☰ Работа с данными</button>
-</section>
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
 
-<div id="dataMenuBackdrop" class="menu-backdrop hidden" aria-hidden="true">
-  <aside class="data-menu" role="dialog" aria-modal="true" aria-labelledby="dataMenuTitle">
-    <div class="data-menu-head">
-      <div><h2 id="dataMenuTitle">Работа с данными</h2><p>Импорт, экспорт и резервные копии</p></div>
-      <button id="closeDataMenuBtn" class="icon-btn" aria-label="Закрыть">✕</button>
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+
+    <meta name="theme-color" content="#111827" />
+
+    <title>Fire Device Tracker</title>
+
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="stylesheet" href="./styles.css?v=6" />
+  </head>
+
+  <body>
+    <header class="app-header">
+      <div>
+        <h1>Fire Device Tracker</h1>
+        <p>Печать и монтаж адресов</p>
+      </div>
+
+      <button id="installBtn" class="secondary hidden" type="button">
+        Установить
+      </button>
+    </header>
+
+    <main>
+      <!-- Поиск -->
+      <section class="search-row">
+        <input
+          id="search"
+          type="search"
+          inputmode="numeric"
+          autocomplete="off"
+          placeholder="Адрес, Device ID, блок..."
+        />
+
+        <button id="scanQrBtn" class="scan-button" type="button">📷 QR</button>
+      </section>
+
+      <!-- Фильтры -->
+      <section class="toolbar">
+        <select id="blockFilter">
+          <option value="">Все блоки</option>
+        </select>
+
+        <select id="statusFilter">
+          <option value="">Все статусы</option>
+          <option value="not_printed">Не распечатано</option>
+          <option value="printed">Распечатано</option>
+          <option value="installed">Наклеено</option>
+        </select>
+      </section>
+
+      <!-- Статистика -->
+      <section class="summary">
+        <div>
+          <strong id="totalCount">0</strong>
+          <span>Всего</span>
+        </div>
+
+        <div>
+          <strong id="printedCount">0</strong>
+          <span>Распечатано</span>
+        </div>
+
+        <div>
+          <strong id="installedCount">0</strong>
+          <span>Наклеено</span>
+        </div>
+      </section>
+
+      <!-- Меню данных -->
+      <section class="data-menu-bar">
+        <button id="openDataMenuBtn" class="secondary" type="button">
+          ☰ Работа с данными
+        </button>
+      </section>
+
+      <!-- Пустое состояние -->
+      <section id="emptyState" class="empty">
+        <h2>Нет данных</h2>
+
+        <p>
+          Импортируйте CSV с колонками: Block, Address, Device ID, Device type,
+          Description.
+        </p>
+      </section>
+
+      <!-- Карточки для телефона -->
+      <section id="cards" class="cards"></section>
+
+      <!-- Таблица для компьютера -->
+      <section class="table-wrap">
+        <table id="deviceTable">
+          <thead>
+            <tr>
+              <th>Block</th>
+              <th>Address</th>
+              <th>Device ID</th>
+              <th>Device type</th>
+              <th>Description</th>
+              <th>Распечатано</th>
+              <th>Наклеено</th>
+            </tr>
+          </thead>
+
+          <tbody></tbody>
+        </table>
+      </section>
+    </main>
+
+    <!-- Меню работы с данными -->
+    <div id="dataMenuBackdrop" class="menu-backdrop hidden" aria-hidden="true">
+      <aside
+        class="data-menu"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="dataMenuTitle"
+      >
+        <div class="data-menu-head">
+          <div>
+            <h2 id="dataMenuTitle">Работа с данными</h2>
+            <p>Импорт, экспорт и резервные копии</p>
+          </div>
+
+          <button
+            id="closeDataMenuBtn"
+            class="icon-btn"
+            type="button"
+            aria-label="Закрыть меню"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div class="data-menu-actions">
+          <label class="file-btn">
+            Импорт CSV
+
+            <input id="csvInput" type="file" accept=".csv,text/csv" hidden />
+          </label>
+
+          <button id="exportCsvBtn" class="secondary" type="button">
+            Экспорт CSV
+          </button>
+
+          <button id="exportJsonBtn" class="secondary" type="button">
+            Создать резервную копию
+          </button>
+
+          <label class="file-btn secondary">
+            Восстановить из копии
+
+            <input
+              id="jsonInput"
+              type="file"
+              accept=".json,application/json"
+              hidden
+            />
+          </label>
+
+          <div class="danger-zone">
+            <h3>Опасные действия</h3>
+
+            <p>
+              Очистка удалит устройства и отметки только на этом устройстве.
+            </p>
+
+            <button id="resetBtn" class="danger" type="button">
+              Очистить все данные
+            </button>
+          </div>
+        </div>
+      </aside>
     </div>
-    <div class="data-menu-actions">
-      <label class="file-btn">Импорт CSV<input id="csvInput" type="file" accept=".csv,text/csv" hidden /></label>
-      <button id="exportCsvBtn" class="secondary">Экспорт CSV</button>
-      <button id="exportJsonBtn" class="secondary">Создать резервную копию</button>
-      <label class="file-btn secondary">Восстановить из копии<input id="jsonInput" type="file" accept=".json,application/json" hidden /></label>
-      <div class="danger-zone"><h3>Опасные действия</h3><p>Очистка удалит все устройства и отметки только на этом устройстве.</p><button id="resetBtn" class="danger">Очистить все данные</button></div>
+
+    <!-- Окно QR-сканера -->
+    <div id="scannerModal" class="scanner-backdrop hidden" aria-hidden="true">
+      <section class="scanner-modal">
+        <div class="scanner-head">
+          <div>
+            <h2>Сканирование QR</h2>
+            <p>Поместите один QR-код внутрь центральной рамки</p>
+          </div>
+
+          <button
+            id="closeScannerBtn"
+            class="icon-btn scanner-close"
+            type="button"
+            aria-label="Закрыть сканер"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div class="scanner-container">
+          <div id="qrReader"></div>
+
+          <div class="aim-overlay" aria-hidden="true">
+            <div class="aim-box"></div>
+          </div>
+        </div>
+
+        <p class="scanner-help">
+          Старайтесь приблизить камеру так, чтобы соседние QR-коды не попадали в
+          центральную рамку.
+        </p>
+      </section>
     </div>
-  </aside>
-</div><section id="emptyState" class="empty"><h2>Нет данных</h2><p>Импортируйте CSV с колонками: Block, Address, Device ID, Device type, Description.</p></section><section id="cards" class="cards"></section><section class="table-wrap"><table><thead><tr><th>Block</th><th>Address</th><th>Device ID</th><th>Device type</th><th>Description</th><th>Распечатано</th><th>Наклеено</th></tr></thead><tbody id="tbody"></tbody></table></section></main><dialog id="scannerDialog" class="scanner-dialog"><div class="scanner-head"><div><h2>Сканирование QR</h2><p>Наведите камеру на QR-код устройства.</p></div><button id="closeScannerBtn" type="button">Закрыть</button></div><div id="qrReader"></div><p id="scannerMessage" class="scanner-message"></p></dialog><template id="cardTemplate"><article class="card"><div class="card-head"><div><div class="address"></div><div class="block"></div></div><div class="type"></div></div><div class="device-id"></div><div class="description"></div><div class="status-row"><label><input type="checkbox" class="printed"> Распечатано</label><label><input type="checkbox" class="installed"> Наклеено</label></div></article></template><script src="html5-qrcode.min.js?v=3"></script><script src="app.js?v=3"></script></body></html>
+
+    <!-- Подтверждение результата сканирования -->
+    <div
+      id="scanConfirmModal"
+      class="scan-confirm-backdrop hidden"
+      aria-hidden="true"
+    >
+      <section class="scan-confirm">
+        <h2>Найден Device ID</h2>
+
+        <div id="scanConfirmId" class="scan-confirm-id"></div>
+
+        <p>Проверьте, что считан нужный QR-код.</p>
+
+        <div class="scan-confirm-actions">
+          <button id="confirmScanBtn" type="button">Использовать</button>
+
+          <button id="retryScanBtn" class="secondary" type="button">
+            Сканировать снова
+          </button>
+
+          <button id="cancelScanBtn" class="secondary" type="button">
+            Отмена
+          </button>
+        </div>
+      </section>
+    </div>
+
+    <!-- Шаблон карточки -->
+    <template id="cardTemplate">
+      <article class="device-card">
+        <div class="card-head">
+          <div>
+            <div class="address"></div>
+            <div class="block"></div>
+          </div>
+
+          <div class="type"></div>
+        </div>
+
+        <div class="device-id"></div>
+        <div class="description"></div>
+
+        <div class="status-row">
+          <label>
+            <input type="checkbox" class="printed-check" />
+            Распечатано
+          </label>
+
+          <label>
+            <input type="checkbox" class="installed-check" />
+            Наклеено
+          </label>
+        </div>
+      </article>
+    </template>
+
+    <script src="./html5-qrcode.min.js?v=6"></script>
+    <script src="./app.js?v=6"></script>
+  </body>
+</html>

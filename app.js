@@ -1,29 +1,969 @@
-const KEY='fire-device-tracker-v1';let devices=[],deferredPrompt=null;const $=id=>document.getElementById(id);const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));function norm(r){return{block:r.block??r.Block??'',address:r.address??r.Address??'',deviceId:String(r.deviceId??r['Device ID']??'').trim(),deviceType:r.deviceType??r['Device type']??'',description:r.description??r.Description??'',printed:Boolean(r.printed),installed:Boolean(r.installed)}}function save(){localStorage.setItem(KEY,JSON.stringify(devices))}function load(){try{devices=(JSON.parse(localStorage.getItem(KEY))||[]).map(norm)}catch{devices=[]}render()}function parseCSV(t){let rows=[],row=[],cell='',q=false;for(let i=0;i<t.length;i++){let c=t[i],n=t[i+1];if(c==='"'&&q&&n==='"'){cell+='"';i++}else if(c==='"')q=!q;else if(c===','&&!q){row.push(cell);cell=''}else if((c==='\n'||c==='\r')&&!q){if(c==='\r'&&n==='\n')i++;row.push(cell);cell='';if(row.some(v=>v!==''))rows.push(row);row=[]}else cell+=c}row.push(cell);if(row.some(v=>v!==''))rows.push(row);return rows}function importCSV(t){const rows=parseCSV(t),h=rows[0]?.map(x=>x.trim())||[],req=['Block','Address','Device ID','Device type','Description'],miss=req.filter(x=>!h.includes(x));if(miss.length)throw Error('Нет колонок: '+miss.join(', '));devices=rows.slice(1).map(cols=>{let o={};h.forEach((x,i)=>o[x]=cols[i]??'');o.printed=['1','true','yes','да'].includes(String(o.Printed||'').toLowerCase());o.installed=['1','true','yes','да'].includes(String(o.Installed||'').toLowerCase());return norm(o)}).filter(d=>d.deviceId||d.address);save();render()}function filtered(){const q=$('search').value.trim().toLowerCase(),b=$('blockFilter').value,s=$('statusFilter').value;return devices.filter(d=>{const hay=`${d.block} ${d.address} ${d.deviceId} ${d.deviceType} ${d.description}`.toLowerCase();return(!q||hay.includes(q))&&(!b||d.block===b)&&(!s||(s==='not_printed'&&!d.printed)||(s==='printed'&&d.printed&&!d.installed)||(s==='installed'&&d.installed))})}function setStatus(i,f,v){devices[i][f]=v;if(f==='installed'&&v)devices[i].printed=true;if(f==='printed'&&!v)devices[i].installed=false;save();render()}function render(){const bf=$('blockFilter'),cur=bf.value,blocks=[...new Set(devices.map(d=>d.block).filter(Boolean))].sort();bf.innerHTML='<option value="">Все блоки</option>'+blocks.map(b=>`<option ${b===cur?'selected':''}>${esc(b)}</option>`).join('');$('emptyState').classList.toggle('hidden',devices.length>0);$('totalCount').textContent=devices.length;$('printedCount').textContent=devices.filter(d=>d.printed).length;$('installedCount').textContent=devices.filter(d=>d.installed).length;const tb=$('tbody'),cards=$('cards');tb.innerHTML='';cards.innerHTML='';for(const d of filtered()){const i=devices.indexOf(d),tr=document.createElement('tr');tr.innerHTML=`<td>${esc(d.block)}</td><td><strong>${esc(d.address)}</strong></td><td>${esc(d.deviceId)}</td><td>${esc(d.deviceType)}</td><td>${esc(d.description)}</td><td class="status"><input type="checkbox" ${d.printed?'checked':''}></td><td class="status"><input type="checkbox" ${d.installed?'checked':''}></td>`;const ch=tr.querySelectorAll('input');ch[0].onchange=e=>setStatus(i,'printed',e.target.checked);ch[1].onchange=e=>setStatus(i,'installed',e.target.checked);tb.appendChild(tr);const n=$('cardTemplate').content.cloneNode(true);n.querySelector('.address').textContent=d.address;n.querySelector('.block').textContent=d.block||'Без блока';n.querySelector('.type').textContent=d.deviceType;n.querySelector('.device-id').textContent='ID: '+d.deviceId;n.querySelector('.description').textContent=d.description;const pc=n.querySelector('.printed'),ic=n.querySelector('.installed');pc.checked=d.printed;ic.checked=d.installed;pc.onchange=e=>setStatus(i,'printed',e.target.checked);ic.onchange=e=>setStatus(i,'installed',e.target.checked);cards.appendChild(n)}}function dl(name,content,type){const u=URL.createObjectURL(new Blob([content],{type})),a=document.createElement('a');a.href=u;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(u),1000)}function ce(v){v=String(v??'');return/[",\n]/.test(v)?`"${v.replaceAll('"','""')}"`:v}$('csvInput').onchange=async e=>{const f=e.target.files[0];if(!f)return;try{importCSV(await f.text())}catch(err){alert(err.message)}e.target.value=''};$('jsonInput').onchange=async e=>{const f=e.target.files[0];if(!f)return;try{const x=JSON.parse(await f.text());if(!Array.isArray(x))throw Error('Неверный формат');devices=x.map(norm);save();render()}catch(err){alert(err.message)}e.target.value=''};$('exportCsvBtn').onclick=()=>{const h=['Block','Address','Device ID','Device type','Description','Printed','Installed'],lines=[h.join(',')];devices.forEach(d=>lines.push([d.block,d.address,d.deviceId,d.deviceType,d.description,d.printed,d.installed].map(ce).join(',')));dl('fire-devices.csv','\ufeff'+lines.join('\n'),'text/csv;charset=utf-8')};$('exportJsonBtn').onclick=()=>dl('fire-devices-backup.json',JSON.stringify(devices,null,2),'application/json');$('resetBtn').onclick=()=>{if(!confirm('Очистить все локальные данные и отметки?'))return;const x=prompt('Введите УДАЛИТЬ для подтверждения');if(x!=='УДАЛИТЬ'){alert('Очистка отменена');return;}devices=[];save();render();closeDataMenu();alert('Данные очищены')};['search','blockFilter','statusFilter'].forEach(id=>$(id).addEventListener('input',render));window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;$('installBtn').classList.remove('hidden')});$('installBtn').onclick=async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;$('installBtn').classList.add('hidden')};
-const dataMenuBackdrop = document.getElementById("dataMenuBackdrop");
-const openDataMenuBtn = document.getElementById("openDataMenuBtn");
-const closeDataMenuBtn = document.getElementById("closeDataMenuBtn");
-function openDataMenu(){
+"use strict";
+
+const STORAGE_KEY = "fire-device-tracker-v6";
+
+let devices = [];
+let deferredPrompt = null;
+
+let html5QrCode = null;
+let scannerRunning = false;
+let scanLocked = false;
+let pendingScannedId = "";
+let highlightedDeviceId = "";
+
+const $ = (id) => document.getElementById(id);
+
+const search = $("search");
+const blockFilter = $("blockFilter");
+const statusFilter = $("statusFilter");
+
+const cards = $("cards");
+const tbody = document.querySelector("#deviceTable tbody");
+const cardTemplate = $("cardTemplate");
+
+const dataMenuBackdrop = $("dataMenuBackdrop");
+const scannerModal = $("scannerModal");
+const scanConfirmModal = $("scanConfirmModal");
+
+/* ------------------------------------------------------------------
+   Data
+------------------------------------------------------------------ */
+
+function normalizeBoolean(value) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  const normalized = String(value ?? "")
+    .trim()
+    .toLowerCase();
+
+  return ["1", "true", "yes", "да", "printed", "installed"].includes(
+    normalized,
+  );
+}
+
+function normalizeRow(row) {
+  return {
+    block: row.block ?? row.Block ?? "",
+
+    address: row.address ?? row.Address ?? "",
+
+    deviceId: String(row.deviceId ?? row["Device ID"] ?? "").trim(),
+
+    deviceType: row.deviceType ?? row["Device type"] ?? "",
+
+    description: row.description ?? row.Description ?? "",
+
+    printed: normalizeBoolean(row.printed ?? row.Printed),
+
+    installed: normalizeBoolean(row.installed ?? row.Installed),
+  };
+}
+
+function save() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(devices));
+}
+
+function load() {
+  const raw = localStorage.getItem(STORAGE_KEY);
+
+  if (!raw) {
+    devices = [];
+    render();
+    return;
+  }
+
+  try {
+    const parsed = JSON.parse(raw);
+
+    devices = Array.isArray(parsed) ? parsed.map(normalizeRow) : [];
+  } catch (error) {
+    console.error("Ошибка чтения localStorage:", error);
+    devices = [];
+  }
+
+  render();
+}
+
+/* ------------------------------------------------------------------
+   CSV
+------------------------------------------------------------------ */
+
+function detectDelimiter(firstLine) {
+  const commaCount = (firstLine.match(/,/g) || []).length;
+  const semicolonCount = (firstLine.match(/;/g) || []).length;
+
+  return semicolonCount > commaCount ? ";" : ",";
+}
+
+function csvParse(text) {
+  const cleaned = String(text ?? "").replace(/^\uFEFF/, "");
+
+  const firstLine = cleaned.split(/\r?\n/, 1)[0] ?? "";
+
+  const delimiter = detectDelimiter(firstLine);
+
+  const rows = [];
+
+  let row = [];
+  let cell = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < cleaned.length; i += 1) {
+    const char = cleaned[i];
+    const next = cleaned[i + 1];
+
+    if (char === '"' && inQuotes && next === '"') {
+      cell += '"';
+      i += 1;
+      continue;
+    }
+
+    if (char === '"') {
+      inQuotes = !inQuotes;
+      continue;
+    }
+
+    if (char === delimiter && !inQuotes) {
+      row.push(cell);
+      cell = "";
+      continue;
+    }
+
+    if ((char === "\n" || char === "\r") && !inQuotes) {
+      if (char === "\r" && next === "\n") {
+        i += 1;
+      }
+
+      row.push(cell);
+      cell = "";
+
+      if (row.some((value) => value.trim() !== "")) {
+        rows.push(row);
+      }
+
+      row = [];
+      continue;
+    }
+
+    cell += char;
+  }
+
+  row.push(cell);
+
+  if (row.some((value) => value.trim() !== "")) {
+    rows.push(row);
+  }
+
+  return rows;
+}
+
+function importCsv(text) {
+  const rows = csvParse(text);
+
+  if (rows.length < 2) {
+    throw new Error("CSV пустой или не содержит строк данных.");
+  }
+
+  const headers = rows[0].map((header) => String(header).trim());
+
+  const requiredHeaders = [
+    "Block",
+    "Address",
+    "Device ID",
+    "Device type",
+    "Description",
+  ];
+
+  const missingHeaders = requiredHeaders.filter(
+    (header) => !headers.includes(header),
+  );
+
+  if (missingHeaders.length > 0) {
+    throw new Error(`Отсутствуют колонки: ${missingHeaders.join(", ")}`);
+  }
+
+  const importedDevices = rows
+    .slice(1)
+    .map((columns) => {
+      const row = {};
+
+      headers.forEach((header, index) => {
+        row[header] = columns[index] ?? "";
+      });
+
+      return normalizeRow(row);
+    })
+    .filter((device) => device.deviceId || device.address);
+
+  /*
+   * При повторном импорте сохраняем текущие статусы
+   * по Device ID.
+   */
+  const currentStatuses = new Map(
+    devices.map((device) => [
+      device.deviceId,
+      {
+        printed: device.printed,
+        installed: device.installed,
+      },
+    ]),
+  );
+
+  devices = importedDevices.map((device) => {
+    const previous = currentStatuses.get(device.deviceId);
+
+    if (!previous) {
+      return device;
+    }
+
+    return {
+      ...device,
+      printed: previous.printed,
+      installed: previous.installed,
+    };
+  });
+
+  save();
+  render();
+}
+
+function csvEscape(value) {
+  const text = String(value ?? "");
+
+  if (/[",;\n\r]/.test(text)) {
+    return `"${text.replaceAll('"', '""')}"`;
+  }
+
+  return text;
+}
+
+function exportCsv() {
+  const header = [
+    "Block",
+    "Address",
+    "Device ID",
+    "Device type",
+    "Description",
+    "Printed",
+    "Installed",
+  ];
+
+  const lines = [header.join(",")];
+
+  devices.forEach((device) => {
+    lines.push(
+      [
+        device.block,
+        device.address,
+        device.deviceId,
+        device.deviceType,
+        device.description,
+        device.printed,
+        device.installed,
+      ]
+        .map(csvEscape)
+        .join(","),
+    );
+  });
+
+  downloadFile(
+    "fire-devices.csv",
+    "\uFEFF" + lines.join("\n"),
+    "text/csv;charset=utf-8",
+  );
+}
+
+/* ------------------------------------------------------------------
+   Filtering and rendering
+------------------------------------------------------------------ */
+
+function getFilteredDevices() {
+  const query = search.value.trim().toLowerCase();
+
+  const selectedBlock = blockFilter.value;
+  const selectedStatus = statusFilter.value;
+
+  return devices.filter((device) => {
+    const searchText = [
+      device.block,
+      device.address,
+      device.deviceId,
+      device.deviceType,
+      device.description,
+    ]
+      .join(" ")
+      .toLowerCase();
+
+    const matchesSearch = !query || searchText.includes(query);
+
+    const matchesBlock = !selectedBlock || device.block === selectedBlock;
+
+    let matchesStatus = true;
+
+    if (selectedStatus === "not_printed") {
+      matchesStatus = !device.printed;
+    }
+
+    if (selectedStatus === "printed") {
+      matchesStatus = device.printed && !device.installed;
+    }
+
+    if (selectedStatus === "installed") {
+      matchesStatus = device.installed;
+    }
+
+    return matchesSearch && matchesBlock && matchesStatus;
+  });
+}
+
+function updateDeviceStatus(deviceIndex, field, checked) {
+  const device = devices[deviceIndex];
+
+  if (!device) {
+    return;
+  }
+
+  device[field] = checked;
+
+  /*
+   * Если устройство наклеено,
+   * оно автоматически считается распечатанным.
+   */
+  if (field === "installed" && checked) {
+    device.printed = true;
+  }
+
+  /*
+   * Если снимается отметка "распечатано",
+   * снимаем и "наклеено".
+   */
+  if (field === "printed" && !checked) {
+    device.installed = false;
+  }
+
+  save();
+  render();
+}
+
+function updateBlockOptions() {
+  const currentBlock = blockFilter.value;
+
+  const blocks = [
+    ...new Set(devices.map((device) => device.block).filter(Boolean)),
+  ].sort((a, b) =>
+    a.localeCompare(b, undefined, {
+      numeric: true,
+    }),
+  );
+
+  blockFilter.innerHTML = '<option value="">Все блоки</option>';
+
+  blocks.forEach((block) => {
+    const option = document.createElement("option");
+
+    option.value = block;
+    option.textContent = block;
+
+    if (block === currentBlock) {
+      option.selected = true;
+    }
+
+    blockFilter.appendChild(option);
+  });
+}
+
+function createDesktopRow(device) {
+  const deviceIndex = devices.indexOf(device);
+
+  const row = document.createElement("tr");
+
+  if (highlightedDeviceId && device.deviceId === highlightedDeviceId) {
+    row.classList.add("highlighted");
+  }
+
+  const blockCell = document.createElement("td");
+  blockCell.textContent = device.block;
+
+  const addressCell = document.createElement("td");
+  const addressStrong = document.createElement("strong");
+
+  addressStrong.textContent = device.address;
+  addressCell.appendChild(addressStrong);
+
+  const idCell = document.createElement("td");
+  idCell.textContent = device.deviceId;
+
+  const typeCell = document.createElement("td");
+  typeCell.textContent = device.deviceType;
+
+  const descriptionCell = document.createElement("td");
+  descriptionCell.textContent = device.description;
+
+  const printedCell = document.createElement("td");
+  printedCell.className = "status";
+
+  const printedCheckbox = document.createElement("input");
+  printedCheckbox.type = "checkbox";
+  printedCheckbox.checked = device.printed;
+
+  printedCheckbox.addEventListener("change", (event) => {
+    updateDeviceStatus(deviceIndex, "printed", event.target.checked);
+  });
+
+  printedCell.appendChild(printedCheckbox);
+
+  const installedCell = document.createElement("td");
+  installedCell.className = "status";
+
+  const installedCheckbox = document.createElement("input");
+  installedCheckbox.type = "checkbox";
+  installedCheckbox.checked = device.installed;
+
+  installedCheckbox.addEventListener("change", (event) => {
+    updateDeviceStatus(deviceIndex, "installed", event.target.checked);
+  });
+
+  installedCell.appendChild(installedCheckbox);
+
+  row.append(
+    blockCell,
+    addressCell,
+    idCell,
+    typeCell,
+    descriptionCell,
+    printedCell,
+    installedCell,
+  );
+
+  return row;
+}
+
+function createMobileCard(device) {
+  const deviceIndex = devices.indexOf(device);
+
+  const fragment = cardTemplate.content.cloneNode(true);
+
+  const card = fragment.querySelector(".device-card");
+
+  if (highlightedDeviceId && device.deviceId === highlightedDeviceId) {
+    card.classList.add("highlighted");
+  }
+
+  fragment.querySelector(".address").textContent = device.address;
+
+  fragment.querySelector(".block").textContent = device.block || "Без блока";
+
+  fragment.querySelector(".type").textContent =
+    device.deviceType || "Устройство";
+
+  fragment.querySelector(".device-id").textContent = `ID: ${device.deviceId}`;
+
+  fragment.querySelector(".description").textContent = device.description;
+
+  const printedCheckbox = fragment.querySelector(".printed-check");
+
+  const installedCheckbox = fragment.querySelector(".installed-check");
+
+  printedCheckbox.checked = device.printed;
+
+  installedCheckbox.checked = device.installed;
+
+  printedCheckbox.addEventListener("change", (event) => {
+    updateDeviceStatus(deviceIndex, "printed", event.target.checked);
+  });
+
+  installedCheckbox.addEventListener("change", (event) => {
+    updateDeviceStatus(deviceIndex, "installed", event.target.checked);
+  });
+
+  return fragment;
+}
+
+function render() {
+  updateBlockOptions();
+
+  const filteredDevices = getFilteredDevices();
+
+  $("emptyState").classList.toggle("hidden", devices.length > 0);
+
+  $("totalCount").textContent = devices.length;
+
+  $("printedCount").textContent = devices.filter(
+    (device) => device.printed,
+  ).length;
+
+  $("installedCount").textContent = devices.filter(
+    (device) => device.installed,
+  ).length;
+
+  tbody.innerHTML = "";
+  cards.innerHTML = "";
+
+  filteredDevices.forEach((device) => {
+    tbody.appendChild(createDesktopRow(device));
+
+    cards.appendChild(createMobileCard(device));
+  });
+
+  if (highlightedDeviceId && filteredDevices.length > 0) {
+    requestAnimationFrame(() => {
+      const highlighted = document.querySelector(".highlighted");
+
+      highlighted?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+    });
+  }
+}
+
+/* ------------------------------------------------------------------
+   Data menu
+------------------------------------------------------------------ */
+
+function openDataMenu() {
   dataMenuBackdrop.classList.remove("hidden");
-  dataMenuBackdrop.setAttribute("aria-hidden","false");
-  document.body.style.overflow="hidden";
+  dataMenuBackdrop.setAttribute("aria-hidden", "false");
+
+  document.body.style.overflow = "hidden";
 }
-function closeDataMenu(){
+
+function closeDataMenu() {
   dataMenuBackdrop.classList.add("hidden");
-  dataMenuBackdrop.setAttribute("aria-hidden","true");
-  document.body.style.overflow="";
+  dataMenuBackdrop.setAttribute("aria-hidden", "true");
+
+  document.body.style.overflow = "";
 }
-openDataMenuBtn.addEventListener("click", openDataMenu);
-closeDataMenuBtn.addEventListener("click", closeDataMenu);
-dataMenuBackdrop.addEventListener("click", e=>{if(e.target===dataMenuBackdrop)closeDataMenu()});
-document.addEventListener("keydown", e=>{if(e.key==="Escape")closeDataMenu()});
 
-if('serviceWorker'in navigator)navigator.serviceWorker.register('sw.js?v=3');load();
+/* ------------------------------------------------------------------
+   QR scanner
+------------------------------------------------------------------ */
 
+function extractDeviceId(decodedText) {
+  const text = String(decodedText ?? "").trim();
 
-let qrScanner=null,lastScanAt=0;
-function extractDeviceId(text){text=String(text||'').trim();const exact=text.match(/^\d{10}$/);if(exact)return exact[0];const embedded=text.match(/(?:^|\D)(\d{10})(?:\D|$)/);return embedded?embedded[1]:text}
-function openMatchedDevice(deviceId){$('search').value=deviceId;$('blockFilter').value='';$('statusFilter').value='';render();const match=devices.find(d=>d.deviceId===deviceId);if(!match){alert(`Device ID ${deviceId} не найден в таблице.`);$('search').focus();return}setTimeout(()=>{const target=matchMedia('(max-width:760px)').matches?document.querySelector('.card'):document.querySelector('#tbody tr');if(target){target.classList.add('scan-highlight');target.scrollIntoView({behavior:'smooth',block:'center'});setTimeout(()=>target.classList.remove('scan-highlight'),2500)}},50)}
-async function stopScanner(){if(qrScanner){try{await qrScanner.stop()}catch{}try{await qrScanner.clear()}catch{}qrScanner=null}}
-async function closeScanner(){await stopScanner();const d=$('scannerDialog');if(d.open)d.close()}
-async function startScanner(){const d=$('scannerDialog'),m=$('scannerMessage');m.textContent='Запрашиваем доступ к камере…';d.showModal();if(typeof Html5Qrcode==='undefined'){m.textContent='Модуль сканирования не загрузился.';return}await stopScanner();qrScanner=new Html5Qrcode('qrReader',{verbose:false});const config={fps:10,qrbox:(w,h)=>{const s=Math.floor(Math.min(w,h)*.72);return{width:s,height:s}},aspectRatio:1,disableFlip:false};try{await qrScanner.start({facingMode:'environment'},config,async decodedText=>{const now=Date.now();if(now-lastScanAt<1500)return;lastScanAt=now;const id=extractDeviceId(decodedText);m.textContent=`Считано: ${id}`;await closeScanner();openMatchedDevice(id)},()=>{});m.textContent='Камера активна. Поместите QR-код в рамку.'}catch(err){m.textContent='Не удалось открыть камеру. Проверьте разрешение камеры и используйте HTTPS.'}}
-$('scanBtn').onclick=startScanner;$('closeScannerBtn').onclick=closeScanner;$('scannerDialog').addEventListener('cancel',e=>{e.preventDefault();closeScanner()});
+  /*
+   * Ищем десятизначный Device ID
+   * внутри любого содержимого QR.
+   */
+  const match = text.match(/(?:^|\D)(\d{10})(?:\D|$)/);
+
+  if (match) {
+    return match[1];
+  }
+
+  /*
+   * Если QR содержит ровно 10 цифр.
+   */
+  if (/^\d{10}$/.test(text)) {
+    return text;
+  }
+
+  return "";
+}
+
+async function stopScannerCamera() {
+  if (!html5QrCode || !scannerRunning) {
+    return;
+  }
+
+  try {
+    await html5QrCode.stop();
+  } catch (error) {
+    console.warn("Ошибка остановки камеры:", error);
+  }
+
+  try {
+    await html5QrCode.clear();
+  } catch (error) {
+    console.warn("Ошибка очистки QR-сканера:", error);
+  }
+
+  scannerRunning = false;
+}
+
+async function closeScanner() {
+  await stopScannerCamera();
+
+  pendingScannedId = "";
+  scanLocked = false;
+
+  scannerModal.classList.add("hidden");
+  scannerModal.setAttribute("aria-hidden", "true");
+
+  scanConfirmModal.classList.add("hidden");
+  scanConfirmModal.setAttribute("aria-hidden", "true");
+
+  document.body.style.overflow = "";
+}
+
+async function handleScanSuccess(decodedText) {
+  /*
+   * Защищает от нескольких результатов подряд.
+   */
+  if (scanLocked) {
+    return;
+  }
+
+  const deviceId = extractDeviceId(decodedText);
+
+  if (!deviceId) {
+    return;
+  }
+
+  scanLocked = true;
+  pendingScannedId = deviceId;
+
+  if ("vibrate" in navigator) {
+    navigator.vibrate(80);
+  }
+
+  await stopScannerCamera();
+
+  scannerModal.classList.add("hidden");
+  scannerModal.setAttribute("aria-hidden", "true");
+
+  $("scanConfirmId").textContent = deviceId;
+
+  scanConfirmModal.classList.remove("hidden");
+
+  scanConfirmModal.setAttribute("aria-hidden", "false");
+}
+
+async function startScanner() {
+  /*
+   * Старый ID очищается при каждом новом запуске.
+   */
+  search.value = "";
+  highlightedDeviceId = "";
+  pendingScannedId = "";
+  scanLocked = false;
+
+  render();
+
+  scanConfirmModal.classList.add("hidden");
+
+  scannerModal.classList.remove("hidden");
+  scannerModal.setAttribute("aria-hidden", "false");
+
+  document.body.style.overflow = "hidden";
+
+  if (!html5QrCode) {
+    html5QrCode = new Html5Qrcode("qrReader");
+  }
+
+  if (scannerRunning) {
+    return;
+  }
+
+  try {
+    await html5QrCode.start(
+      {
+        facingMode: "environment",
+      },
+      {
+        fps: 7,
+
+        /*
+         * Библиотека анализирует только центральную
+         * небольшую область, поэтому соседние QR-коды
+         * реже попадают в результат.
+         */
+        qrbox: (viewfinderWidth, viewfinderHeight) => {
+          const minSide = Math.min(viewfinderWidth, viewfinderHeight);
+
+          const size = Math.floor(Math.min(minSide * 0.38, 210));
+
+          return {
+            width: size,
+            height: size,
+          };
+        },
+
+        aspectRatio: 1.333333,
+        disableFlip: true,
+      },
+      handleScanSuccess,
+      () => {
+        /*
+         * Ошибки "QR не найден" не показываем.
+         */
+      },
+    );
+
+    scannerRunning = true;
+  } catch (error) {
+    console.error("Не удалось запустить камеру:", error);
+
+    scannerRunning = false;
+
+    scannerModal.classList.add("hidden");
+    scannerModal.setAttribute("aria-hidden", "true");
+
+    document.body.style.overflow = "";
+
+    alert(
+      "Не удалось открыть камеру. " +
+        "Проверьте доступ к камере и убедитесь, " +
+        "что сайт открыт через HTTPS.",
+    );
+  }
+}
+
+async function confirmScannedId() {
+  if (!pendingScannedId) {
+    return;
+  }
+
+  const deviceId = pendingScannedId;
+
+  search.value = deviceId;
+  highlightedDeviceId = deviceId;
+
+  pendingScannedId = "";
+  scanLocked = false;
+
+  scanConfirmModal.classList.add("hidden");
+  scanConfirmModal.setAttribute("aria-hidden", "true");
+
+  document.body.style.overflow = "";
+
+  render();
+
+  const exists = devices.some((device) => device.deviceId === deviceId);
+
+  if (!exists) {
+    alert(`Device ID ${deviceId} отсутствует в таблице.`);
+  }
+}
+
+async function retryScanner() {
+  pendingScannedId = "";
+  scanLocked = false;
+
+  /*
+   * Перед повторным сканированием снова
+   * очищаем старый результат.
+   */
+  search.value = "";
+  highlightedDeviceId = "";
+
+  scanConfirmModal.classList.add("hidden");
+  scanConfirmModal.setAttribute("aria-hidden", "true");
+
+  render();
+
+  await startScanner();
+}
+
+/* ------------------------------------------------------------------
+   Files and backup
+------------------------------------------------------------------ */
+
+function downloadFile(filename, content, mimeType) {
+  const blob = new Blob([content], { type: mimeType });
+
+  const url = URL.createObjectURL(blob);
+
+  const link = document.createElement("a");
+
+  link.href = url;
+  link.download = filename;
+
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+
+  setTimeout(() => {
+    URL.revokeObjectURL(url);
+  }, 1000);
+}
+
+/* ------------------------------------------------------------------
+   Event handlers
+------------------------------------------------------------------ */
+
+$("openDataMenuBtn").addEventListener("click", openDataMenu);
+
+$("closeDataMenuBtn").addEventListener("click", closeDataMenu);
+
+dataMenuBackdrop.addEventListener("click", (event) => {
+  if (event.target === dataMenuBackdrop) {
+    closeDataMenu();
+  }
+});
+
+search.addEventListener("input", () => {
+  highlightedDeviceId = "";
+  render();
+});
+
+blockFilter.addEventListener("change", render);
+
+statusFilter.addEventListener("change", render);
+
+$("scanQrBtn").addEventListener("click", async () => {
+  await stopScannerCamera();
+  await startScanner();
+});
+
+$("closeScannerBtn").addEventListener("click", closeScanner);
+
+$("confirmScanBtn").addEventListener("click", confirmScannedId);
+
+$("retryScanBtn").addEventListener("click", retryScanner);
+
+$("cancelScanBtn").addEventListener("click", closeScanner);
+
+$("csvInput").addEventListener("change", async (event) => {
+  const file = event.target.files[0];
+
+  if (!file) {
+    return;
+  }
+
+  try {
+    const text = await file.text();
+    importCsv(text);
+    closeDataMenu();
+
+    alert(`Импортировано устройств: ${devices.length}`);
+  } catch (error) {
+    console.error(error);
+    alert(error.message);
+  } finally {
+    event.target.value = "";
+  }
+});
+
+$("exportCsvBtn").addEventListener("click", exportCsv);
+
+$("exportJsonBtn").addEventListener("click", () => {
+  downloadFile(
+    "fire-devices-backup.json",
+    JSON.stringify(devices, null, 2),
+    "application/json",
+  );
+});
+
+$("jsonInput").addEventListener("change", async (event) => {
+  const file = event.target.files[0];
+
+  if (!file) {
+    return;
+  }
+
+  try {
+    const parsed = JSON.parse(await file.text());
+
+    if (!Array.isArray(parsed)) {
+      throw new Error("Резервная копия имеет неверный формат.");
+    }
+
+    devices = parsed.map(normalizeRow);
+
+    save();
+    render();
+    closeDataMenu();
+
+    alert(`Восстановлено устройств: ${devices.length}`);
+  } catch (error) {
+    console.error(error);
+    alert(error.message);
+  } finally {
+    event.target.value = "";
+  }
+});
+
+$("resetBtn").addEventListener("click", () => {
+  const firstConfirmation = confirm(
+    "Очистить все локальные данные и отметки? " +
+      "Это действие нельзя отменить без резервной копии.",
+  );
+
+  if (!firstConfirmation) {
+    return;
+  }
+
+  const confirmationText = prompt("Для подтверждения введите слово УДАЛИТЬ");
+
+  if (confirmationText !== "УДАЛИТЬ") {
+    alert("Очистка отменена.");
+    return;
+  }
+
+  devices = [];
+  search.value = "";
+  highlightedDeviceId = "";
+
+  save();
+  render();
+  closeDataMenu();
+
+  alert("Локальные данные очищены.");
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") {
+    return;
+  }
+
+  if (!scanConfirmModal.classList.contains("hidden")) {
+    closeScanner();
+    return;
+  }
+
+  if (!scannerModal.classList.contains("hidden")) {
+    closeScanner();
+    return;
+  }
+
+  closeDataMenu();
+});
+
+/* ------------------------------------------------------------------
+   PWA installation
+------------------------------------------------------------------ */
+
+window.addEventListener("beforeinstallprompt", (event) => {
+  event.preventDefault();
+  deferredPrompt = event;
+
+  $("installBtn").classList.remove("hidden");
+});
+
+$("installBtn").addEventListener("click", async () => {
+  if (!deferredPrompt) {
+    return;
+  }
+
+  deferredPrompt.prompt();
+
+  await deferredPrompt.userChoice;
+
+  deferredPrompt = null;
+
+  $("installBtn").classList.add("hidden");
+});
+
+/* ------------------------------------------------------------------
+   Service worker
+------------------------------------------------------------------ */
+
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", async () => {
+    try {
+      await navigator.serviceWorker.register("./sw.js?v=6");
+    } catch (error) {
+      console.error("Ошибка регистрации service worker:", error);
+    }
+  });
+}
+
+/* ------------------------------------------------------------------
+   Startup
+------------------------------------------------------------------ */
+
+load();
