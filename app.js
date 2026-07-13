@@ -1,969 +1,1281 @@
 "use strict";
 
-const STORAGE_KEY = "fire-device-tracker-v6";
+const STORAGE_KEY = "fireDeviceTracker.devices.v1";
 
-let devices = [];
-let deferredPrompt = null;
+const REQUIRED_CSV_COLUMNS = [
+  "Address",
+  "Device ID",
+  "Device type",
+  "Description",
+];
 
-let html5QrCode = null;
-let scannerRunning = false;
-let scanLocked = false;
-let pendingScannedId = "";
-let highlightedDeviceId = "";
+const state = {
+  devices: [],
+  searchQuery: "",
+  activeFilter: "all",
+  highlightedDeviceId: null,
+  scanner: null,
+  scannerRunning: false,
+  highlightTimer: null,
+  toastTimer: null,
+};
 
-const $ = (id) => document.getElementById(id);
+const elements = {
+  searchInput: document.getElementById("searchInput"),
+  clearSearchButton: document.getElementById("clearSearchButton"),
+  scannerButton: document.getElementById("scannerButton"),
 
-const search = $("search");
-const blockFilter = $("blockFilter");
-const statusFilter = $("statusFilter");
+  filterButtons: Array.from(document.querySelectorAll(".filter-button")),
 
-const cards = $("cards");
-const tbody = document.querySelector("#deviceTable tbody");
-const cardTemplate = $("cardTemplate");
+  totalCount: document.getElementById("totalCount"),
+  printedCount: document.getElementById("printedCount"),
+  installedCount: document.getElementById("installedCount"),
+  completedCount: document.getElementById("completedCount"),
 
-const dataMenuBackdrop = $("dataMenuBackdrop");
-const scannerModal = $("scannerModal");
-const scanConfirmModal = $("scanConfirmModal");
+  emptyState: document.getElementById("emptyState"),
+  noResultsState: document.getElementById("noResultsState"),
+  deviceContent: document.getElementById("deviceContent"),
 
-/* ------------------------------------------------------------------
-   Data
------------------------------------------------------------------- */
+  mobileDeviceList: document.getElementById("mobileDeviceList"),
+  desktopDeviceTableBody: document.getElementById("desktopDeviceTableBody"),
 
-function normalizeBoolean(value) {
-  if (typeof value === "boolean") {
-    return value;
-  }
+  dataMenuButton: document.getElementById("dataMenuButton"),
+  dataMenu: document.getElementById("dataMenu"),
+  menuBackdrop: document.getElementById("menuBackdrop"),
+  closeDataMenuButton: document.getElementById("closeDataMenuButton"),
 
-  const normalized = String(value ?? "")
-    .trim()
-    .toLowerCase();
+  importButton: document.getElementById("importButton"),
+  emptyImportButton: document.getElementById("emptyImportButton"),
+  exportButton: document.getElementById("exportButton"),
+  clearDataButton: document.getElementById("clearDataButton"),
+  csvFileInput: document.getElementById("csvFileInput"),
 
-  return ["1", "true", "yes", "да", "printed", "installed"].includes(
-    normalized,
-  );
-}
+  resetFiltersButton: document.getElementById("resetFiltersButton"),
 
-function normalizeRow(row) {
+  scannerModal: document.getElementById("scannerModal"),
+  closeScannerButton: document.getElementById("closeScannerButton"),
+  qrReader: document.getElementById("qrReader"),
+  scannerStatus: document.getElementById("scannerStatus"),
+  manualQrInput: document.getElementById("manualQrInput"),
+  manualQrSearchButton: document.getElementById("manualQrSearchButton"),
+
+  toast: document.getElementById("toast"),
+};
+
+const dataRepository = {
+  async getAll() {
+    const rawValue = localStorage.getItem(STORAGE_KEY);
+
+    if (!rawValue) {
+      return [];
+    }
+
+    try {
+      const parsedValue = JSON.parse(rawValue);
+
+      if (!Array.isArray(parsedValue)) {
+        return [];
+      }
+
+      return parsedValue
+        .map(normalizeStoredDevice)
+        .filter((device) => device.deviceId);
+    } catch (error) {
+      console.error("Не удалось прочитать данные:", error);
+      return [];
+    }
+  },
+
+  async saveAll(devices) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(devices));
+  },
+
+  async clear() {
+    localStorage.removeItem(STORAGE_KEY);
+  },
+};
+
+function normalizeStoredDevice(device) {
   return {
-    block: row.block ?? row.Block ?? "",
-
-    address: row.address ?? row.Address ?? "",
-
-    deviceId: String(row.deviceId ?? row["Device ID"] ?? "").trim(),
-
-    deviceType: row.deviceType ?? row["Device type"] ?? "",
-
-    description: row.description ?? row.Description ?? "",
-
-    printed: normalizeBoolean(row.printed ?? row.Printed),
-
-    installed: normalizeBoolean(row.installed ?? row.Installed),
+    address: String(device.address || "").trim(),
+    deviceId: String(device.deviceId || "").trim(),
+    deviceType: String(device.deviceType || "").trim(),
+    description: String(device.description || "").trim(),
+    printed: Boolean(device.printed),
+    installed: Boolean(device.installed),
   };
 }
 
-function save() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(devices));
+function normalizeSearchValue(value) {
+  return String(value || "")
+    .trim()
+    .toLocaleLowerCase();
 }
 
-function load() {
-  const raw = localStorage.getItem(STORAGE_KEY);
+function normalizeHeaderName(value) {
+  return String(value || "")
+    .replace(/^\uFEFF/, "")
+    .trim()
+    .toLocaleLowerCase()
+    .replace(/\s+/g, " ");
+}
 
-  if (!raw) {
-    devices = [];
-    render();
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function escapeCsvValue(value) {
+  const stringValue = String(value ?? "");
+
+  if (
+    stringValue.includes(",") ||
+    stringValue.includes('"') ||
+    stringValue.includes("\n") ||
+    stringValue.includes("\r")
+  ) {
+    return `"${stringValue.replaceAll('"', '""')}"`;
+  }
+
+  return stringValue;
+}
+
+function parseBooleanCsvValue(value) {
+  const normalizedValue = normalizeSearchValue(value);
+
+  return ["true", "1", "yes", "y", "да", "taip", "checked"].includes(
+    normalizedValue,
+  );
+}
+
+function sortDevices(devices) {
+  return [...devices].sort((firstDevice, secondDevice) => {
+    const addressComparison = firstDevice.address.localeCompare(
+      secondDevice.address,
+      undefined,
+      {
+        numeric: true,
+        sensitivity: "base",
+      },
+    );
+
+    if (addressComparison !== 0) {
+      return addressComparison;
+    }
+
+    return firstDevice.deviceId.localeCompare(
+      secondDevice.deviceId,
+      undefined,
+      {
+        numeric: true,
+        sensitivity: "base",
+      },
+    );
+  });
+}
+
+function getFilteredDevices() {
+  const normalizedQuery = normalizeSearchValue(state.searchQuery);
+
+  return state.devices.filter((device) => {
+    const matchesSearch =
+      !normalizedQuery ||
+      normalizeSearchValue(device.address).includes(normalizedQuery) ||
+      normalizeSearchValue(device.deviceId).includes(normalizedQuery) ||
+      normalizeSearchValue(device.description).includes(normalizedQuery);
+
+    if (!matchesSearch) {
+      return false;
+    }
+
+    switch (state.activeFilter) {
+      case "not-printed":
+        return !device.printed;
+
+      case "not-installed":
+        return !device.installed;
+
+      case "completed":
+        return device.printed && device.installed;
+
+      case "all":
+      default:
+        return true;
+    }
+  });
+}
+
+function renderStatistics() {
+  const total = state.devices.length;
+
+  const printed = state.devices.filter((device) => device.printed).length;
+
+  const installed = state.devices.filter((device) => device.installed).length;
+
+  const completed = state.devices.filter(
+    (device) => device.printed && device.installed,
+  ).length;
+
+  elements.totalCount.textContent = String(total);
+  elements.printedCount.textContent = String(printed);
+  elements.installedCount.textContent = String(installed);
+  elements.completedCount.textContent = String(completed);
+}
+
+function createMobileDeviceCard(device) {
+  const highlightedClass =
+    device.deviceId === state.highlightedDeviceId ? " is-highlighted" : "";
+
+  const printedCompleteClass = device.printed ? " is-complete" : "";
+
+  const installedCompleteClass = device.installed ? " is-complete" : "";
+
+  return `
+    <article
+      class="device-card${highlightedClass}"
+      data-device-id="${escapeHtml(device.deviceId)}"
+    >
+      <div class="device-card__top">
+        <div>
+          <h2 class="device-card__address">
+            ${escapeHtml(device.address || "Без адреса")}
+          </h2>
+
+          <p class="device-card__id">
+            Device ID: ${escapeHtml(device.deviceId)}
+          </p>
+        </div>
+      </div>
+
+      ${
+        device.deviceType
+          ? `
+            <div class="device-card__type">
+              ${escapeHtml(device.deviceType)}
+            </div>
+          `
+          : ""
+      }
+
+      ${
+        device.description
+          ? `
+            <p class="device-card__description">
+              ${escapeHtml(device.description)}
+            </p>
+          `
+          : ""
+      }
+
+      <div class="device-card__statuses">
+        <label class="status-toggle${printedCompleteClass}">
+          <input
+            type="checkbox"
+            data-device-id="${escapeHtml(device.deviceId)}"
+            data-status-field="printed"
+            ${device.printed ? "checked" : ""}
+          >
+
+          <span
+            class="status-toggle__box"
+            aria-hidden="true"
+          >
+            ✓
+          </span>
+
+          <span>Printed</span>
+        </label>
+
+        <label class="status-toggle${installedCompleteClass}">
+          <input
+            type="checkbox"
+            data-device-id="${escapeHtml(device.deviceId)}"
+            data-status-field="installed"
+            ${device.installed ? "checked" : ""}
+          >
+
+          <span
+            class="status-toggle__box"
+            aria-hidden="true"
+          >
+            ✓
+          </span>
+
+          <span>Installed</span>
+        </label>
+      </div>
+    </article>
+  `;
+}
+
+function createDesktopDeviceRow(device) {
+  const highlightedClass =
+    device.deviceId === state.highlightedDeviceId ? " is-highlighted" : "";
+
+  return `
+    <tr
+      class="${highlightedClass.trim()}"
+      data-device-id="${escapeHtml(device.deviceId)}"
+    >
+      <td>
+        <strong>${escapeHtml(device.address)}</strong>
+      </td>
+
+      <td class="device-table__id">
+        ${escapeHtml(device.deviceId)}
+      </td>
+
+      <td>
+        ${escapeHtml(device.deviceType)}
+      </td>
+
+      <td>
+        ${escapeHtml(device.description)}
+      </td>
+
+      <td class="status-column">
+        <label class="table-checkbox">
+          <span class="visually-hidden">
+            Printed: ${escapeHtml(device.deviceId)}
+          </span>
+
+          <input
+            type="checkbox"
+            data-device-id="${escapeHtml(device.deviceId)}"
+            data-status-field="printed"
+            ${device.printed ? "checked" : ""}
+          >
+        </label>
+      </td>
+
+      <td class="status-column">
+        <label class="table-checkbox">
+          <span class="visually-hidden">
+            Installed: ${escapeHtml(device.deviceId)}
+          </span>
+
+          <input
+            type="checkbox"
+            data-device-id="${escapeHtml(device.deviceId)}"
+            data-status-field="installed"
+            ${device.installed ? "checked" : ""}
+          >
+        </label>
+      </td>
+    </tr>
+  `;
+}
+
+function renderDevices() {
+  const filteredDevices = getFilteredDevices();
+  const hasDevices = state.devices.length > 0;
+  const hasResults = filteredDevices.length > 0;
+
+  elements.emptyState.hidden = hasDevices;
+  elements.noResultsState.hidden = !hasDevices || hasResults;
+  elements.deviceContent.hidden = !hasDevices || !hasResults;
+
+  if (!hasDevices || !hasResults) {
+    elements.mobileDeviceList.innerHTML = "";
+    elements.desktopDeviceTableBody.innerHTML = "";
     return;
   }
 
+  elements.mobileDeviceList.innerHTML = filteredDevices
+    .map(createMobileDeviceCard)
+    .join("");
+
+  elements.desktopDeviceTableBody.innerHTML = filteredDevices
+    .map(createDesktopDeviceRow)
+    .join("");
+}
+
+function renderSearchControls() {
+  elements.clearSearchButton.hidden = state.searchQuery.length === 0;
+
+  elements.filterButtons.forEach((button) => {
+    const isActive = button.dataset.filter === state.activeFilter;
+
+    button.classList.toggle("is-active", isActive);
+    button.setAttribute("aria-pressed", String(isActive));
+  });
+}
+
+function render() {
+  renderStatistics();
+  renderSearchControls();
+  renderDevices();
+}
+
+async function saveDevices() {
   try {
-    const parsed = JSON.parse(raw);
-
-    devices = Array.isArray(parsed) ? parsed.map(normalizeRow) : [];
+    await dataRepository.saveAll(state.devices);
   } catch (error) {
-    console.error("Ошибка чтения localStorage:", error);
-    devices = [];
+    console.error("Не удалось сохранить данные:", error);
+
+    showToast("Не удалось сохранить изменения", "error");
+  }
+}
+
+async function updateDeviceStatus(deviceId, statusField, checked) {
+  if (statusField !== "printed" && statusField !== "installed") {
+    return;
   }
 
-  render();
-}
-
-/* ------------------------------------------------------------------
-   CSV
------------------------------------------------------------------- */
-
-function detectDelimiter(firstLine) {
-  const commaCount = (firstLine.match(/,/g) || []).length;
-  const semicolonCount = (firstLine.match(/;/g) || []).length;
-
-  return semicolonCount > commaCount ? ";" : ",";
-}
-
-function csvParse(text) {
-  const cleaned = String(text ?? "").replace(/^\uFEFF/, "");
-
-  const firstLine = cleaned.split(/\r?\n/, 1)[0] ?? "";
-
-  const delimiter = detectDelimiter(firstLine);
-
-  const rows = [];
-
-  let row = [];
-  let cell = "";
-  let inQuotes = false;
-
-  for (let i = 0; i < cleaned.length; i += 1) {
-    const char = cleaned[i];
-    const next = cleaned[i + 1];
-
-    if (char === '"' && inQuotes && next === '"') {
-      cell += '"';
-      i += 1;
-      continue;
-    }
-
-    if (char === '"') {
-      inQuotes = !inQuotes;
-      continue;
-    }
-
-    if (char === delimiter && !inQuotes) {
-      row.push(cell);
-      cell = "";
-      continue;
-    }
-
-    if ((char === "\n" || char === "\r") && !inQuotes) {
-      if (char === "\r" && next === "\n") {
-        i += 1;
-      }
-
-      row.push(cell);
-      cell = "";
-
-      if (row.some((value) => value.trim() !== "")) {
-        rows.push(row);
-      }
-
-      row = [];
-      continue;
-    }
-
-    cell += char;
-  }
-
-  row.push(cell);
-
-  if (row.some((value) => value.trim() !== "")) {
-    rows.push(row);
-  }
-
-  return rows;
-}
-
-function importCsv(text) {
-  const rows = csvParse(text);
-
-  if (rows.length < 2) {
-    throw new Error("CSV пустой или не содержит строк данных.");
-  }
-
-  const headers = rows[0].map((header) => String(header).trim());
-
-  const requiredHeaders = [
-    "Block",
-    "Address",
-    "Device ID",
-    "Device type",
-    "Description",
-  ];
-
-  const missingHeaders = requiredHeaders.filter(
-    (header) => !headers.includes(header),
-  );
-
-  if (missingHeaders.length > 0) {
-    throw new Error(`Отсутствуют колонки: ${missingHeaders.join(", ")}`);
-  }
-
-  const importedDevices = rows
-    .slice(1)
-    .map((columns) => {
-      const row = {};
-
-      headers.forEach((header, index) => {
-        row[header] = columns[index] ?? "";
-      });
-
-      return normalizeRow(row);
-    })
-    .filter((device) => device.deviceId || device.address);
-
-  /*
-   * При повторном импорте сохраняем текущие статусы
-   * по Device ID.
-   */
-  const currentStatuses = new Map(
-    devices.map((device) => [
-      device.deviceId,
-      {
-        printed: device.printed,
-        installed: device.installed,
-      },
-    ]),
-  );
-
-  devices = importedDevices.map((device) => {
-    const previous = currentStatuses.get(device.deviceId);
-
-    if (!previous) {
-      return device;
-    }
-
-    return {
-      ...device,
-      printed: previous.printed,
-      installed: previous.installed,
-    };
-  });
-
-  save();
-  render();
-}
-
-function csvEscape(value) {
-  const text = String(value ?? "");
-
-  if (/[",;\n\r]/.test(text)) {
-    return `"${text.replaceAll('"', '""')}"`;
-  }
-
-  return text;
-}
-
-function exportCsv() {
-  const header = [
-    "Block",
-    "Address",
-    "Device ID",
-    "Device type",
-    "Description",
-    "Printed",
-    "Installed",
-  ];
-
-  const lines = [header.join(",")];
-
-  devices.forEach((device) => {
-    lines.push(
-      [
-        device.block,
-        device.address,
-        device.deviceId,
-        device.deviceType,
-        device.description,
-        device.printed,
-        device.installed,
-      ]
-        .map(csvEscape)
-        .join(","),
-    );
-  });
-
-  downloadFile(
-    "fire-devices.csv",
-    "\uFEFF" + lines.join("\n"),
-    "text/csv;charset=utf-8",
-  );
-}
-
-/* ------------------------------------------------------------------
-   Filtering and rendering
------------------------------------------------------------------- */
-
-function getFilteredDevices() {
-  const query = search.value.trim().toLowerCase();
-
-  const selectedBlock = blockFilter.value;
-  const selectedStatus = statusFilter.value;
-
-  return devices.filter((device) => {
-    const searchText = [
-      device.block,
-      device.address,
-      device.deviceId,
-      device.deviceType,
-      device.description,
-    ]
-      .join(" ")
-      .toLowerCase();
-
-    const matchesSearch = !query || searchText.includes(query);
-
-    const matchesBlock = !selectedBlock || device.block === selectedBlock;
-
-    let matchesStatus = true;
-
-    if (selectedStatus === "not_printed") {
-      matchesStatus = !device.printed;
-    }
-
-    if (selectedStatus === "printed") {
-      matchesStatus = device.printed && !device.installed;
-    }
-
-    if (selectedStatus === "installed") {
-      matchesStatus = device.installed;
-    }
-
-    return matchesSearch && matchesBlock && matchesStatus;
-  });
-}
-
-function updateDeviceStatus(deviceIndex, field, checked) {
-  const device = devices[deviceIndex];
+  const device = state.devices.find((item) => item.deviceId === deviceId);
 
   if (!device) {
     return;
   }
 
-  device[field] = checked;
+  device[statusField] = Boolean(checked);
 
-  /*
-   * Если устройство наклеено,
-   * оно автоматически считается распечатанным.
-   */
-  if (field === "installed" && checked) {
-    device.printed = true;
-  }
-
-  /*
-   * Если снимается отметка "распечатано",
-   * снимаем и "наклеено".
-   */
-  if (field === "printed" && !checked) {
-    device.installed = false;
-  }
-
-  save();
+  await saveDevices();
   render();
 }
 
-function updateBlockOptions() {
-  const currentBlock = blockFilter.value;
+function parseCsv(text) {
+  const rows = [];
+  let currentRow = [];
+  let currentValue = "";
+  let insideQuotes = false;
 
-  const blocks = [
-    ...new Set(devices.map((device) => device.block).filter(Boolean)),
-  ].sort((a, b) =>
-    a.localeCompare(b, undefined, {
-      numeric: true,
-    }),
-  );
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+    const nextCharacter = text[index + 1];
 
-  blockFilter.innerHTML = '<option value="">Все блоки</option>';
+    if (insideQuotes) {
+      if (character === '"' && nextCharacter === '"') {
+        currentValue += '"';
+        index += 1;
+        continue;
+      }
 
-  blocks.forEach((block) => {
-    const option = document.createElement("option");
+      if (character === '"') {
+        insideQuotes = false;
+        continue;
+      }
 
-    option.value = block;
-    option.textContent = block;
-
-    if (block === currentBlock) {
-      option.selected = true;
+      currentValue += character;
+      continue;
     }
 
-    blockFilter.appendChild(option);
-  });
-}
+    if (character === '"') {
+      insideQuotes = true;
+      continue;
+    }
 
-function createDesktopRow(device) {
-  const deviceIndex = devices.indexOf(device);
+    if (character === ",") {
+      currentRow.push(currentValue);
+      currentValue = "";
+      continue;
+    }
 
-  const row = document.createElement("tr");
+    if (character === "\n") {
+      currentRow.push(currentValue.replace(/\r$/, ""));
 
-  if (highlightedDeviceId && device.deviceId === highlightedDeviceId) {
-    row.classList.add("highlighted");
+      rows.push(currentRow);
+
+      currentRow = [];
+      currentValue = "";
+      continue;
+    }
+
+    currentValue += character;
   }
 
-  const blockCell = document.createElement("td");
-  blockCell.textContent = device.block;
+  if (currentValue.length > 0 || currentRow.length > 0) {
+    currentRow.push(currentValue.replace(/\r$/, ""));
 
-  const addressCell = document.createElement("td");
-  const addressStrong = document.createElement("strong");
-
-  addressStrong.textContent = device.address;
-  addressCell.appendChild(addressStrong);
-
-  const idCell = document.createElement("td");
-  idCell.textContent = device.deviceId;
-
-  const typeCell = document.createElement("td");
-  typeCell.textContent = device.deviceType;
-
-  const descriptionCell = document.createElement("td");
-  descriptionCell.textContent = device.description;
-
-  const printedCell = document.createElement("td");
-  printedCell.className = "status";
-
-  const printedCheckbox = document.createElement("input");
-  printedCheckbox.type = "checkbox";
-  printedCheckbox.checked = device.printed;
-
-  printedCheckbox.addEventListener("change", (event) => {
-    updateDeviceStatus(deviceIndex, "printed", event.target.checked);
-  });
-
-  printedCell.appendChild(printedCheckbox);
-
-  const installedCell = document.createElement("td");
-  installedCell.className = "status";
-
-  const installedCheckbox = document.createElement("input");
-  installedCheckbox.type = "checkbox";
-  installedCheckbox.checked = device.installed;
-
-  installedCheckbox.addEventListener("change", (event) => {
-    updateDeviceStatus(deviceIndex, "installed", event.target.checked);
-  });
-
-  installedCell.appendChild(installedCheckbox);
-
-  row.append(
-    blockCell,
-    addressCell,
-    idCell,
-    typeCell,
-    descriptionCell,
-    printedCell,
-    installedCell,
-  );
-
-  return row;
-}
-
-function createMobileCard(device) {
-  const deviceIndex = devices.indexOf(device);
-
-  const fragment = cardTemplate.content.cloneNode(true);
-
-  const card = fragment.querySelector(".device-card");
-
-  if (highlightedDeviceId && device.deviceId === highlightedDeviceId) {
-    card.classList.add("highlighted");
+    rows.push(currentRow);
   }
 
-  fragment.querySelector(".address").textContent = device.address;
-
-  fragment.querySelector(".block").textContent = device.block || "Без блока";
-
-  fragment.querySelector(".type").textContent =
-    device.deviceType || "Устройство";
-
-  fragment.querySelector(".device-id").textContent = `ID: ${device.deviceId}`;
-
-  fragment.querySelector(".description").textContent = device.description;
-
-  const printedCheckbox = fragment.querySelector(".printed-check");
-
-  const installedCheckbox = fragment.querySelector(".installed-check");
-
-  printedCheckbox.checked = device.printed;
-
-  installedCheckbox.checked = device.installed;
-
-  printedCheckbox.addEventListener("change", (event) => {
-    updateDeviceStatus(deviceIndex, "printed", event.target.checked);
-  });
-
-  installedCheckbox.addEventListener("change", (event) => {
-    updateDeviceStatus(deviceIndex, "installed", event.target.checked);
-  });
-
-  return fragment;
+  return rows.filter((row) => row.some((value) => String(value).trim() !== ""));
 }
 
-function render() {
-  updateBlockOptions();
+function detectDelimiter(text) {
+  const firstNonEmptyLine = text
+    .split(/\r?\n/)
+    .find((line) => line.trim() !== "");
 
-  const filteredDevices = getFilteredDevices();
-
-  $("emptyState").classList.toggle("hidden", devices.length > 0);
-
-  $("totalCount").textContent = devices.length;
-
-  $("printedCount").textContent = devices.filter(
-    (device) => device.printed,
-  ).length;
-
-  $("installedCount").textContent = devices.filter(
-    (device) => device.installed,
-  ).length;
-
-  tbody.innerHTML = "";
-  cards.innerHTML = "";
-
-  filteredDevices.forEach((device) => {
-    tbody.appendChild(createDesktopRow(device));
-
-    cards.appendChild(createMobileCard(device));
-  });
-
-  if (highlightedDeviceId && filteredDevices.length > 0) {
-    requestAnimationFrame(() => {
-      const highlighted = document.querySelector(".highlighted");
-
-      highlighted?.scrollIntoView({
-        behavior: "smooth",
-        block: "center",
-      });
-    });
-  }
-}
-
-/* ------------------------------------------------------------------
-   Data menu
------------------------------------------------------------------- */
-
-function openDataMenu() {
-  dataMenuBackdrop.classList.remove("hidden");
-  dataMenuBackdrop.setAttribute("aria-hidden", "false");
-
-  document.body.style.overflow = "hidden";
-}
-
-function closeDataMenu() {
-  dataMenuBackdrop.classList.add("hidden");
-  dataMenuBackdrop.setAttribute("aria-hidden", "true");
-
-  document.body.style.overflow = "";
-}
-
-/* ------------------------------------------------------------------
-   QR scanner
------------------------------------------------------------------- */
-
-function extractDeviceId(decodedText) {
-  const text = String(decodedText ?? "").trim();
-
-  /*
-   * Ищем десятизначный Device ID
-   * внутри любого содержимого QR.
-   */
-  const match = text.match(/(?:^|\D)(\d{10})(?:\D|$)/);
-
-  if (match) {
-    return match[1];
+  if (!firstNonEmptyLine) {
+    return ",";
   }
 
-  /*
-   * Если QR содержит ровно 10 цифр.
-   */
-  if (/^\d{10}$/.test(text)) {
+  const commaCount = firstNonEmptyLine.split(",").length - 1;
+
+  const semicolonCount = firstNonEmptyLine.split(";").length - 1;
+
+  return semicolonCount > commaCount ? ";" : ",";
+}
+
+function convertDelimiterToComma(text, delimiter) {
+  if (delimiter === ",") {
     return text;
   }
 
-  return "";
+  let result = "";
+  let insideQuotes = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+    const nextCharacter = text[index + 1];
+
+    if (character === '"' && insideQuotes && nextCharacter === '"') {
+      result += '""';
+      index += 1;
+      continue;
+    }
+
+    if (character === '"') {
+      insideQuotes = !insideQuotes;
+      result += character;
+      continue;
+    }
+
+    if (character === delimiter && !insideQuotes) {
+      result += ",";
+      continue;
+    }
+
+    result += character;
+  }
+
+  return result;
 }
 
-async function stopScannerCamera() {
-  if (!html5QrCode || !scannerRunning) {
-    return;
-  }
+function getColumnIndexMap(headers) {
+  const normalizedHeaders = headers.map(normalizeHeaderName);
 
-  try {
-    await html5QrCode.stop();
-  } catch (error) {
-    console.warn("Ошибка остановки камеры:", error);
-  }
+  const aliases = {
+    address: ["address"],
+    deviceId: ["device id", "deviceid", "device_id", "id"],
+    deviceType: ["device type", "devicetype", "device_type", "type"],
+    description: ["description"],
+    printed: ["printed"],
+    installed: ["installed"],
+  };
 
-  try {
-    await html5QrCode.clear();
-  } catch (error) {
-    console.warn("Ошибка очистки QR-сканера:", error);
-  }
+  const result = {};
 
-  scannerRunning = false;
-}
-
-async function closeScanner() {
-  await stopScannerCamera();
-
-  pendingScannedId = "";
-  scanLocked = false;
-
-  scannerModal.classList.add("hidden");
-  scannerModal.setAttribute("aria-hidden", "true");
-
-  scanConfirmModal.classList.add("hidden");
-  scanConfirmModal.setAttribute("aria-hidden", "true");
-
-  document.body.style.overflow = "";
-}
-
-async function handleScanSuccess(decodedText) {
-  /*
-   * Защищает от нескольких результатов подряд.
-   */
-  if (scanLocked) {
-    return;
-  }
-
-  const deviceId = extractDeviceId(decodedText);
-
-  if (!deviceId) {
-    return;
-  }
-
-  scanLocked = true;
-  pendingScannedId = deviceId;
-
-  if ("vibrate" in navigator) {
-    navigator.vibrate(80);
-  }
-
-  await stopScannerCamera();
-
-  scannerModal.classList.add("hidden");
-  scannerModal.setAttribute("aria-hidden", "true");
-
-  $("scanConfirmId").textContent = deviceId;
-
-  scanConfirmModal.classList.remove("hidden");
-
-  scanConfirmModal.setAttribute("aria-hidden", "false");
-}
-
-async function startScanner() {
-  /*
-   * Старый ID очищается при каждом новом запуске.
-   */
-  search.value = "";
-  highlightedDeviceId = "";
-  pendingScannedId = "";
-  scanLocked = false;
-
-  render();
-
-  scanConfirmModal.classList.add("hidden");
-
-  scannerModal.classList.remove("hidden");
-  scannerModal.setAttribute("aria-hidden", "false");
-
-  document.body.style.overflow = "hidden";
-
-  if (!html5QrCode) {
-    html5QrCode = new Html5Qrcode("qrReader");
-  }
-
-  if (scannerRunning) {
-    return;
-  }
-
-  try {
-    await html5QrCode.start(
-      {
-        facingMode: "environment",
-      },
-      {
-        fps: 7,
-
-        /*
-         * Библиотека анализирует только центральную
-         * небольшую область, поэтому соседние QR-коды
-         * реже попадают в результат.
-         */
-        qrbox: (viewfinderWidth, viewfinderHeight) => {
-          const minSide = Math.min(viewfinderWidth, viewfinderHeight);
-
-          const size = Math.floor(Math.min(minSide * 0.38, 210));
-
-          return {
-            width: size,
-            height: size,
-          };
-        },
-
-        aspectRatio: 1.333333,
-        disableFlip: true,
-      },
-      handleScanSuccess,
-      () => {
-        /*
-         * Ошибки "QR не найден" не показываем.
-         */
-      },
+  Object.entries(aliases).forEach(([fieldName, fieldAliases]) => {
+    result[fieldName] = normalizedHeaders.findIndex((header) =>
+      fieldAliases.includes(header),
     );
+  });
 
-    scannerRunning = true;
-  } catch (error) {
-    console.error("Не удалось запустить камеру:", error);
-
-    scannerRunning = false;
-
-    scannerModal.classList.add("hidden");
-    scannerModal.setAttribute("aria-hidden", "true");
-
-    document.body.style.overflow = "";
-
-    alert(
-      "Не удалось открыть камеру. " +
-        "Проверьте доступ к камере и убедитесь, " +
-        "что сайт открыт через HTTPS.",
-    );
-  }
+  return result;
 }
 
-async function confirmScannedId() {
-  if (!pendingScannedId) {
-    return;
+function validateRequiredColumns(indexMap) {
+  const missingColumns = [];
+
+  if (indexMap.address === -1) {
+    missingColumns.push("Address");
   }
 
-  const deviceId = pendingScannedId;
-
-  search.value = deviceId;
-  highlightedDeviceId = deviceId;
-
-  pendingScannedId = "";
-  scanLocked = false;
-
-  scanConfirmModal.classList.add("hidden");
-  scanConfirmModal.setAttribute("aria-hidden", "true");
-
-  document.body.style.overflow = "";
-
-  render();
-
-  const exists = devices.some((device) => device.deviceId === deviceId);
-
-  if (!exists) {
-    alert(`Device ID ${deviceId} отсутствует в таблице.`);
+  if (indexMap.deviceId === -1) {
+    missingColumns.push("Device ID");
   }
-}
 
-async function retryScanner() {
-  pendingScannedId = "";
-  scanLocked = false;
-
-  /*
-   * Перед повторным сканированием снова
-   * очищаем старый результат.
-   */
-  search.value = "";
-  highlightedDeviceId = "";
-
-  scanConfirmModal.classList.add("hidden");
-  scanConfirmModal.setAttribute("aria-hidden", "true");
-
-  render();
-
-  await startScanner();
-}
-
-/* ------------------------------------------------------------------
-   Files and backup
------------------------------------------------------------------- */
-
-function downloadFile(filename, content, mimeType) {
-  const blob = new Blob([content], { type: mimeType });
-
-  const url = URL.createObjectURL(blob);
-
-  const link = document.createElement("a");
-
-  link.href = url;
-  link.download = filename;
-
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-
-  setTimeout(() => {
-    URL.revokeObjectURL(url);
-  }, 1000);
-}
-
-/* ------------------------------------------------------------------
-   Event handlers
------------------------------------------------------------------- */
-
-$("openDataMenuBtn").addEventListener("click", openDataMenu);
-
-$("closeDataMenuBtn").addEventListener("click", closeDataMenu);
-
-dataMenuBackdrop.addEventListener("click", (event) => {
-  if (event.target === dataMenuBackdrop) {
-    closeDataMenu();
+  if (indexMap.deviceType === -1) {
+    missingColumns.push("Device type");
   }
-});
 
-search.addEventListener("input", () => {
-  highlightedDeviceId = "";
-  render();
-});
+  if (indexMap.description === -1) {
+    missingColumns.push("Description");
+  }
 
-blockFilter.addEventListener("change", render);
+  return missingColumns;
+}
 
-statusFilter.addEventListener("change", render);
+function createDevicesFromCsvRows(rows) {
+  if (rows.length < 2) {
+    throw new Error("CSV-файл не содержит строк с устройствами");
+  }
 
-$("scanQrBtn").addEventListener("click", async () => {
-  await stopScannerCamera();
-  await startScanner();
-});
+  const headers = rows[0];
+  const indexMap = getColumnIndexMap(headers);
+  const missingColumns = validateRequiredColumns(indexMap);
 
-$("closeScannerBtn").addEventListener("click", closeScanner);
+  if (missingColumns.length > 0) {
+    throw new Error(`Отсутствуют колонки: ${missingColumns.join(", ")}`);
+  }
 
-$("confirmScanBtn").addEventListener("click", confirmScannedId);
+  const devicesById = new Map();
 
-$("retryScanBtn").addEventListener("click", retryScanner);
+  rows.slice(1).forEach((row) => {
+    const deviceId = String(row[indexMap.deviceId] || "").trim();
 
-$("cancelScanBtn").addEventListener("click", closeScanner);
+    if (!deviceId) {
+      return;
+    }
 
-$("csvInput").addEventListener("change", async (event) => {
-  const file = event.target.files[0];
+    devicesById.set(deviceId, {
+      address: String(row[indexMap.address] || "").trim(),
 
+      deviceId,
+
+      deviceType: String(row[indexMap.deviceType] || "").trim(),
+
+      description: String(row[indexMap.description] || "").trim(),
+
+      printed:
+        indexMap.printed >= 0
+          ? parseBooleanCsvValue(row[indexMap.printed])
+          : false,
+
+      installed:
+        indexMap.installed >= 0
+          ? parseBooleanCsvValue(row[indexMap.installed])
+          : false,
+    });
+  });
+
+  return Array.from(devicesById.values());
+}
+
+function mergeImportedDevices(importedDevices) {
+  const existingDevicesById = new Map(
+    state.devices.map((device) => [device.deviceId, device]),
+  );
+
+  return sortDevices(
+    importedDevices.map((importedDevice) => {
+      const existingDevice = existingDevicesById.get(importedDevice.deviceId);
+
+      return {
+        address: importedDevice.address,
+        deviceId: importedDevice.deviceId,
+        deviceType: importedDevice.deviceType,
+        description: importedDevice.description,
+
+        printed: existingDevice
+          ? existingDevice.printed
+          : importedDevice.printed,
+
+        installed: existingDevice
+          ? existingDevice.installed
+          : importedDevice.installed,
+      };
+    }),
+  );
+}
+
+async function importCsvFile(file) {
   if (!file) {
     return;
   }
 
   try {
     const text = await file.text();
-    importCsv(text);
-    closeDataMenu();
 
-    alert(`Импортировано устройств: ${devices.length}`);
-  } catch (error) {
-    console.error(error);
-    alert(error.message);
-  } finally {
-    event.target.value = "";
-  }
-});
-
-$("exportCsvBtn").addEventListener("click", exportCsv);
-
-$("exportJsonBtn").addEventListener("click", () => {
-  downloadFile(
-    "fire-devices-backup.json",
-    JSON.stringify(devices, null, 2),
-    "application/json",
-  );
-});
-
-$("jsonInput").addEventListener("change", async (event) => {
-  const file = event.target.files[0];
-
-  if (!file) {
-    return;
-  }
-
-  try {
-    const parsed = JSON.parse(await file.text());
-
-    if (!Array.isArray(parsed)) {
-      throw new Error("Резервная копия имеет неверный формат.");
+    if (!text.trim()) {
+      throw new Error("CSV-файл пуст");
     }
 
-    devices = parsed.map(normalizeRow);
+    const delimiter = detectDelimiter(text);
 
-    save();
+    const normalizedText = convertDelimiterToComma(text, delimiter);
+
+    const rows = parseCsv(normalizedText);
+
+    const importedDevices = createDevicesFromCsvRows(rows);
+
+    if (importedDevices.length === 0) {
+      throw new Error("В CSV-файле нет устройств с Device ID");
+    }
+
+    state.devices = mergeImportedDevices(importedDevices);
+
+    state.searchQuery = "";
+    state.activeFilter = "all";
+    state.highlightedDeviceId = null;
+
+    elements.searchInput.value = "";
+
+    await saveDevices();
     render();
     closeDataMenu();
 
-    alert(`Восстановлено устройств: ${devices.length}`);
+    showToast(`Импортировано устройств: ${state.devices.length}`, "success");
   } catch (error) {
-    console.error(error);
-    alert(error.message);
-  } finally {
-    event.target.value = "";
-  }
-});
+    console.error("Ошибка импорта CSV:", error);
 
-$("resetBtn").addEventListener("click", () => {
-  const firstConfirmation = confirm(
-    "Очистить все локальные данные и отметки? " +
-      "Это действие нельзя отменить без резервной копии.",
+    showToast(error.message || "Не удалось импортировать CSV", "error");
+  } finally {
+    elements.csvFileInput.value = "";
+  }
+}
+
+function exportCsv() {
+  if (state.devices.length === 0) {
+    showToast("Нет данных для экспорта", "error");
+
+    return;
+  }
+
+  const headers = [...REQUIRED_CSV_COLUMNS, "Printed", "Installed"];
+
+  const csvRows = [headers.map(escapeCsvValue).join(",")];
+
+  sortDevices(state.devices).forEach((device) => {
+    csvRows.push(
+      [
+        device.address,
+        device.deviceId,
+        device.deviceType,
+        device.description,
+        device.printed ? "true" : "false",
+        device.installed ? "true" : "false",
+      ]
+        .map(escapeCsvValue)
+        .join(","),
+    );
+  });
+
+  const csvContent = `\uFEFF${csvRows.join("\r\n")}`;
+
+  const blob = new Blob([csvContent], {
+    type: "text/csv;charset=utf-8",
+  });
+
+  const downloadUrl = URL.createObjectURL(blob);
+
+  const downloadLink = document.createElement("a");
+
+  const dateValue = new Date().toISOString().slice(0, 10);
+
+  downloadLink.href = downloadUrl;
+  downloadLink.download = `fire-device-tracker-${dateValue}.csv`;
+
+  document.body.appendChild(downloadLink);
+  downloadLink.click();
+  downloadLink.remove();
+
+  URL.revokeObjectURL(downloadUrl);
+
+  closeDataMenu();
+
+  showToast("CSV-файл экспортирован", "success");
+}
+
+async function clearAllData() {
+  if (state.devices.length === 0) {
+    closeDataMenu();
+
+    showToast("Данные уже очищены");
+
+    return;
+  }
+
+  const firstConfirmation = window.confirm(
+    "Удалить все устройства и сохраненные статусы?",
   );
 
   if (!firstConfirmation) {
     return;
   }
 
-  const confirmationText = prompt("Для подтверждения введите слово УДАЛИТЬ");
+  const secondConfirmation = window.confirm(
+    "Это действие нельзя отменить. Подтвердить полную очистку?",
+  );
 
-  if (confirmationText !== "УДАЛИТЬ") {
-    alert("Очистка отменена.");
+  if (!secondConfirmation) {
     return;
   }
 
-  devices = [];
-  search.value = "";
-  highlightedDeviceId = "";
+  try {
+    await dataRepository.clear();
 
-  save();
+    state.devices = [];
+    state.searchQuery = "";
+    state.activeFilter = "all";
+    state.highlightedDeviceId = null;
+
+    elements.searchInput.value = "";
+
+    closeDataMenu();
+    render();
+
+    showToast("Все данные удалены", "success");
+  } catch (error) {
+    console.error("Ошибка очистки данных:", error);
+
+    showToast("Не удалось очистить данные", "error");
+  }
+}
+
+function openDataMenu() {
+  elements.menuBackdrop.hidden = false;
+
+  requestAnimationFrame(() => {
+    elements.dataMenu.classList.add("is-open");
+  });
+
+  elements.dataMenu.setAttribute("aria-hidden", "false");
+
+  elements.dataMenuButton.setAttribute("aria-expanded", "true");
+
+  document.body.classList.add("is-locked");
+}
+
+function closeDataMenu() {
+  elements.dataMenu.classList.remove("is-open");
+
+  elements.dataMenu.setAttribute("aria-hidden", "true");
+
+  elements.dataMenuButton.setAttribute("aria-expanded", "false");
+
+  elements.menuBackdrop.hidden = true;
+  document.body.classList.remove("is-locked");
+}
+
+function showToast(message, type = "default") {
+  window.clearTimeout(state.toastTimer);
+
+  elements.toast.textContent = message;
+
+  elements.toast.classList.remove("is-error", "is-success");
+
+  if (type === "error") {
+    elements.toast.classList.add("is-error");
+  }
+
+  if (type === "success") {
+    elements.toast.classList.add("is-success");
+  }
+
+  elements.toast.hidden = false;
+
+  state.toastTimer = window.setTimeout(() => {
+    elements.toast.hidden = true;
+  }, 3200);
+}
+
+function extractDeviceIdFromQrText(qrText) {
+  const value = String(qrText || "").trim();
+
+  if (!value) {
+    return null;
+  }
+
+  const exactDevice = state.devices.find((device) => device.deviceId === value);
+
+  if (exactDevice) {
+    return exactDevice.deviceId;
+  }
+
+  const containedDevice = state.devices.find(
+    (device) => device.deviceId && value.includes(device.deviceId),
+  );
+
+  if (containedDevice) {
+    return containedDevice.deviceId;
+  }
+
+  const labeledMatch = value.match(
+    /(?:device\s*id|deviceid|device_id|\bid)\s*[:=#-]?\s*([a-z0-9._-]{4,40})/i,
+  );
+
+  if (labeledMatch) {
+    return labeledMatch[1];
+  }
+
+  const numericMatches = value.match(/\b\d{6,20}\b/g);
+
+  if (numericMatches && numericMatches.length > 0) {
+    return numericMatches[0];
+  }
+
+  const alphanumericMatches = value.match(/\b[a-z0-9][a-z0-9._-]{5,39}\b/gi);
+
+  if (alphanumericMatches && alphanumericMatches.length > 0) {
+    return alphanumericMatches[0];
+  }
+
+  return value;
+}
+
+function findDeviceByExtractedId(deviceId) {
+  if (!deviceId) {
+    return null;
+  }
+
+  const normalizedId = normalizeSearchValue(deviceId);
+
+  return (
+    state.devices.find(
+      (device) => normalizeSearchValue(device.deviceId) === normalizedId,
+    ) || null
+  );
+}
+
+function scrollToHighlightedDevice() {
+  requestAnimationFrame(() => {
+    const isDesktop = window.matchMedia("(min-width: 900px)").matches;
+
+    const selector = isDesktop
+      ? `#desktopDeviceTableBody tr[data-device-id="${CSS.escape(
+          state.highlightedDeviceId,
+        )}"]`
+      : `#mobileDeviceList article[data-device-id="${CSS.escape(
+          state.highlightedDeviceId,
+        )}"]`;
+
+    const targetElement = document.querySelector(selector);
+
+    if (!targetElement) {
+      return;
+    }
+
+    targetElement.scrollIntoView({
+      behavior: "smooth",
+      block: "center",
+    });
+  });
+}
+
+function highlightDevice(deviceId) {
+  window.clearTimeout(state.highlightTimer);
+
+  state.highlightedDeviceId = deviceId;
   render();
-  closeDataMenu();
+  scrollToHighlightedDevice();
 
-  alert("Локальные данные очищены.");
-});
+  state.highlightTimer = window.setTimeout(() => {
+    if (state.highlightedDeviceId === deviceId) {
+      state.highlightedDeviceId = null;
+      render();
+    }
+  }, 5000);
+}
 
-document.addEventListener("keydown", (event) => {
-  if (event.key !== "Escape") {
+async function searchByQrText(qrText) {
+  const extractedId = extractDeviceIdFromQrText(qrText);
+
+  if (!extractedId) {
+    showToast("Не удалось определить Device ID", "error");
+
+    return false;
+  }
+
+  const foundDevice = findDeviceByExtractedId(extractedId);
+
+  state.searchQuery = extractedId;
+  state.activeFilter = "all";
+
+  elements.searchInput.value = extractedId;
+
+  if (!foundDevice) {
+    state.highlightedDeviceId = null;
+    render();
+
+    showToast(`Устройство ${extractedId} не найдено`, "error");
+
+    return false;
+  }
+
+  state.searchQuery = foundDevice.deviceId;
+  elements.searchInput.value = foundDevice.deviceId;
+
+  highlightDevice(foundDevice.deviceId);
+
+  showToast(`Найдено устройство: ${foundDevice.address}`, "success");
+
+  return true;
+}
+
+async function handleQrScanSuccess(decodedText) {
+  if (!state.scannerRunning) {
     return;
   }
 
-  if (!scanConfirmModal.classList.contains("hidden")) {
-    closeScanner();
+  elements.scannerStatus.textContent = "QR-код распознан";
+
+  const found = await searchByQrText(decodedText);
+
+  if (found) {
+    await closeScanner();
+  }
+}
+
+function handleQrScanError() {
+  if (!state.scannerRunning) {
     return;
   }
 
-  if (!scannerModal.classList.contains("hidden")) {
-    closeScanner();
+  elements.scannerStatus.textContent = "Наведите камеру на QR-код";
+}
+
+async function startScanner() {
+  if (typeof Html5Qrcode === "undefined") {
+    elements.scannerStatus.textContent = "Библиотека QR Scanner не загружена";
+
+    showToast("Файл html5-qrcode.min.js не найден", "error");
+
     return;
   }
 
-  closeDataMenu();
-});
+  if (!window.isSecureContext && location.hostname !== "localhost") {
+    elements.scannerStatus.textContent = "Камера доступна только через HTTPS";
 
-/* ------------------------------------------------------------------
-   PWA installation
------------------------------------------------------------------- */
+    showToast("Для камеры необходимо открыть приложение через HTTPS", "error");
 
-window.addEventListener("beforeinstallprompt", (event) => {
-  event.preventDefault();
-  deferredPrompt = event;
-
-  $("installBtn").classList.remove("hidden");
-});
-
-$("installBtn").addEventListener("click", async () => {
-  if (!deferredPrompt) {
     return;
   }
 
-  deferredPrompt.prompt();
+  try {
+    if (!state.scanner) {
+      state.scanner = new Html5Qrcode("qrReader");
+    }
 
-  await deferredPrompt.userChoice;
+    const readerWidth = elements.qrReader.clientWidth || 320;
 
-  deferredPrompt = null;
+    const qrBoxSize = Math.max(180, Math.min(280, readerWidth - 40));
 
-  $("installBtn").classList.add("hidden");
-});
+    elements.scannerStatus.textContent = "Запрашивается доступ к камере";
 
-/* ------------------------------------------------------------------
-   Service worker
------------------------------------------------------------------- */
+    await state.scanner.start(
+      {
+        facingMode: {
+          ideal: "environment",
+        },
+      },
+      {
+        fps: 10,
+        qrbox: {
+          width: qrBoxSize,
+          height: qrBoxSize,
+        },
+        aspectRatio: 1,
+      },
+      handleQrScanSuccess,
+      handleQrScanError,
+    );
 
-if ("serviceWorker" in navigator) {
-  window.addEventListener("load", async () => {
-    try {
-      await navigator.serviceWorker.register("./sw.js?v=6");
-    } catch (error) {
-      console.error("Ошибка регистрации service worker:", error);
+    state.scannerRunning = true;
+
+    elements.scannerStatus.textContent = "Наведите камеру на QR-код";
+  } catch (error) {
+    state.scannerRunning = false;
+
+    console.error("Не удалось запустить камеру:", error);
+
+    elements.scannerStatus.textContent = "Не удалось запустить камеру";
+
+    showToast("Проверьте разрешение Safari на использование камеры", "error");
+  }
+}
+
+async function stopScanner() {
+  if (!state.scanner || !state.scannerRunning) {
+    return;
+  }
+
+  try {
+    await state.scanner.stop();
+  } catch (error) {
+    console.warn("Не удалось корректно остановить сканер:", error);
+  }
+
+  try {
+    await state.scanner.clear();
+  } catch (error) {
+    console.warn("Не удалось очистить область сканера:", error);
+  }
+
+  state.scannerRunning = false;
+}
+
+async function openScanner() {
+  if (state.devices.length === 0) {
+    showToast("Сначала импортируйте CSV", "error");
+
+    return;
+  }
+
+  elements.scannerModal.hidden = false;
+  elements.manualQrInput.value = "";
+  elements.scannerStatus.textContent = "Камера не запущена";
+
+  document.body.classList.add("is-locked");
+
+  await startScanner();
+}
+
+async function closeScanner() {
+  await stopScanner();
+
+  elements.scannerModal.hidden = true;
+  elements.scannerStatus.textContent = "Камера не запущена";
+
+  document.body.classList.remove("is-locked");
+}
+
+function resetSearchAndFilters() {
+  state.searchQuery = "";
+  state.activeFilter = "all";
+  state.highlightedDeviceId = null;
+
+  elements.searchInput.value = "";
+
+  render();
+  elements.searchInput.focus();
+}
+
+function handleSearchInput(event) {
+  state.searchQuery = event.target.value;
+  state.highlightedDeviceId = null;
+  render();
+}
+
+function handleFilterClick(event) {
+  const filterValue = event.currentTarget.dataset.filter;
+
+  if (!filterValue) {
+    return;
+  }
+
+  state.activeFilter = filterValue;
+  state.highlightedDeviceId = null;
+
+  render();
+}
+
+function handleStatusChange(event) {
+  const target = event.target;
+
+  if (!(target instanceof HTMLInputElement) || target.type !== "checkbox") {
+    return;
+  }
+
+  const deviceId = target.dataset.deviceId;
+  const statusField = target.dataset.statusField;
+
+  if (!deviceId || !statusField) {
+    return;
+  }
+
+  updateDeviceStatus(deviceId, statusField, target.checked);
+}
+
+function bindEvents() {
+  elements.searchInput.addEventListener("input", handleSearchInput);
+
+  elements.clearSearchButton.addEventListener("click", () => {
+    state.searchQuery = "";
+    state.highlightedDeviceId = null;
+
+    elements.searchInput.value = "";
+    elements.searchInput.focus();
+
+    render();
+  });
+
+  elements.filterButtons.forEach((button) => {
+    button.addEventListener("click", handleFilterClick);
+  });
+
+  elements.mobileDeviceList.addEventListener("change", handleStatusChange);
+
+  elements.desktopDeviceTableBody.addEventListener(
+    "change",
+    handleStatusChange,
+  );
+
+  elements.dataMenuButton.addEventListener("click", openDataMenu);
+
+  elements.closeDataMenuButton.addEventListener("click", closeDataMenu);
+
+  elements.menuBackdrop.addEventListener("click", closeDataMenu);
+
+  elements.importButton.addEventListener("click", () => {
+    elements.csvFileInput.click();
+  });
+
+  elements.emptyImportButton.addEventListener("click", () => {
+    elements.csvFileInput.click();
+  });
+
+  elements.csvFileInput.addEventListener("change", (event) => {
+    const file = event.target.files?.[0];
+
+    importCsvFile(file);
+  });
+
+  elements.exportButton.addEventListener("click", exportCsv);
+
+  elements.clearDataButton.addEventListener("click", clearAllData);
+
+  elements.resetFiltersButton.addEventListener("click", resetSearchAndFilters);
+
+  elements.scannerButton.addEventListener("click", openScanner);
+
+  elements.closeScannerButton.addEventListener("click", closeScanner);
+
+  elements.scannerModal.addEventListener("click", (event) => {
+    if (event.target === elements.scannerModal) {
+      closeScanner();
+    }
+  });
+
+  elements.manualQrSearchButton.addEventListener("click", async () => {
+    const qrText = elements.manualQrInput.value;
+
+    const found = await searchByQrText(qrText);
+
+    if (found) {
+      await closeScanner();
+    }
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") {
+      return;
+    }
+
+    if (!elements.scannerModal.hidden) {
+      closeScanner();
+      return;
+    }
+
+    if (elements.dataMenu.classList.contains("is-open")) {
+      closeDataMenu();
+    }
+  });
+
+  window.addEventListener("pagehide", () => {
+    if (state.scannerRunning) {
+      stopScanner();
     }
   });
 }
 
-/* ------------------------------------------------------------------
-   Startup
------------------------------------------------------------------- */
+async function registerServiceWorker() {
+  if (!("serviceWorker" in navigator)) {
+    return;
+  }
 
-load();
+  try {
+    await navigator.serviceWorker.register("./sw.js?v=7");
+  } catch (error) {
+    console.error("Service Worker не зарегистрирован:", error);
+  }
+}
+
+async function initializeApp() {
+  bindEvents();
+
+  state.devices = sortDevices(await dataRepository.getAll());
+
+  render();
+
+  await registerServiceWorker();
+}
+
+initializeApp();

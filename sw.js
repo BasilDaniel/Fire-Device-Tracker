@@ -1,67 +1,110 @@
 "use strict";
 
-const CACHE_NAME = "fire-device-tracker-v6";
+const CACHE_NAME = "fire-device-tracker-v7";
 
-const ASSETS = [
+const APP_SHELL_FILES = [
   "./",
   "./index.html",
-  "./styles.css?v=6",
-  "./app.js?v=6",
-  "./html5-qrcode.min.js?v=6",
+  "./styles.css?v=7",
+  "./app.js?v=7",
   "./manifest.webmanifest",
+  "./html5-qrcode.min.js",
 ];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS)),
+    caches
+      .open(CACHE_NAME)
+      .then((cache) => {
+        return cache.addAll(APP_SHELL_FILES);
+      })
+      .then(() => {
+        return self.skipWaiting();
+      }),
   );
-
-  self.skipWaiting();
 });
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches
       .keys()
-      .then((cacheNames) =>
-        Promise.all(
-          cacheNames
-            .filter((cacheName) => cacheName !== CACHE_NAME)
-            .map((cacheName) => caches.delete(cacheName)),
-        ),
-      )
-      .then(() => self.clients.claim()),
+      .then((cacheNames) => {
+        return Promise.all(
+          cacheNames.map((cacheName) => {
+            if (cacheName !== CACHE_NAME) {
+              return caches.delete(cacheName);
+            }
+
+            return Promise.resolve(false);
+          }),
+        );
+      })
+      .then(() => {
+        return self.clients.claim();
+      }),
   );
 });
 
 self.addEventListener("fetch", (event) => {
-  if (event.request.method !== "GET") {
+  const request = event.request;
+
+  if (request.method !== "GET") {
+    return;
+  }
+
+  const requestUrl = new URL(request.url);
+
+  if (requestUrl.origin !== self.location.origin) {
+    return;
+  }
+
+  if (request.mode === "navigate") {
+    event.respondWith(
+      fetch(request)
+        .then((networkResponse) => {
+          const responseCopy = networkResponse.clone();
+
+          caches.open(CACHE_NAME).then((cache) => {
+            cache.put("./index.html", responseCopy);
+          });
+
+          return networkResponse;
+        })
+        .catch(async () => {
+          return (
+            (await caches.match(request)) ||
+            (await caches.match("./index.html")) ||
+            (await caches.match("./"))
+          );
+        }),
+    );
+
     return;
   }
 
   event.respondWith(
-    fetch(event.request)
-      .then((response) => {
-        if (!response || response.status !== 200) {
-          return response;
+    caches.match(request).then((cachedResponse) => {
+      if (cachedResponse) {
+        return cachedResponse;
+      }
+
+      return fetch(request).then((networkResponse) => {
+        if (
+          !networkResponse ||
+          networkResponse.status !== 200 ||
+          networkResponse.type !== "basic"
+        ) {
+          return networkResponse;
         }
 
-        const responseCopy = response.clone();
+        const responseCopy = networkResponse.clone();
 
         caches.open(CACHE_NAME).then((cache) => {
-          cache.put(event.request, responseCopy);
+          cache.put(request, responseCopy);
         });
 
-        return response;
-      })
-      .catch(async () => {
-        const cachedResponse = await caches.match(event.request);
-
-        if (cachedResponse) {
-          return cachedResponse;
-        }
-
-        return caches.match("./index.html");
-      }),
+        return networkResponse;
+      });
+    }),
   );
 });
