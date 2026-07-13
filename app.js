@@ -1040,12 +1040,26 @@ async function startScanner() {
 
     elements.scannerStatus.textContent = "Запрашивается доступ к камере";
 
+    const cameras = await Html5Qrcode.getCameras();
+
+    if (!cameras || cameras.length === 0) {
+      throw new Error("Камеры не найдены");
+    }
+
+    const rearCamera =
+      cameras.find((camera) => {
+        const label = String(camera.label || "").toLowerCase();
+
+        return (
+          label.includes("back") ||
+          label.includes("rear") ||
+          label.includes("environment") ||
+          label.includes("зад")
+        );
+      }) || cameras[cameras.length - 1];
+
     await state.scanner.start(
-      {
-        facingMode: {
-          ideal: "environment",
-        },
-      },
+      rearCamera.id,
       {
         fps: 10,
         qrbox: {
