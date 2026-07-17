@@ -25,7 +25,7 @@
 
     <link rel="manifest" href="manifest.webmanifest" />
 
-    <link rel="stylesheet" href="styles.css?v=8" />
+    <link rel="stylesheet" href="styles.css?v=9" />
   </head>
 
   <body>
@@ -199,6 +199,7 @@
                   <th>Device ID</th>
                   <th>Device type</th>
                   <th>Description</th>
+                  <th>Действия</th>
                   <th class="status-column">Printed</th>
                   <th class="status-column">Installed</th>
                 </tr>
@@ -324,9 +325,75 @@
       </div>
     </div>
 
+    <div
+      id="insertDeviceModal"
+      class="modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="insertDeviceModalTitle"
+      hidden
+    >
+      <div class="modal__panel insert-device-modal__panel">
+        <div class="modal__header">
+          <div>
+            <h2 id="insertDeviceModalTitle">Вставить устройство</h2>
+
+            <p id="insertDeviceDescription">
+              Новое устройство будет вставлено перед выбранным.
+            </p>
+          </div>
+
+          <button
+            id="closeInsertDeviceButton"
+            class="icon-button"
+            type="button"
+            aria-label="Закрыть"
+          >
+            ×
+          </button>
+        </div>
+
+        <form id="insertDeviceForm" class="insert-device-form">
+          <div class="form-field">
+            <label for="insertDeviceAddress"> Новый адрес </label>
+
+            <input id="insertDeviceAddress" type="text" readonly />
+          </div>
+
+          <div class="form-field">
+            <label for="insertDeviceId"> Device ID </label>
+
+            <input
+              id="insertDeviceId"
+              type="text"
+              inputmode="numeric"
+              autocomplete="off"
+              required
+            />
+          </div>
+
+          <div class="form-field">
+            <label for="insertDeviceType"> Device type </label>
+
+            <input id="insertDeviceType" type="text" autocomplete="off" />
+          </div>
+
+          <div class="form-field">
+            <label for="insertDeviceDescriptionInput"> Description </label>
+
+            <textarea id="insertDeviceDescriptionInput" rows="3"></textarea>
+          </div>
+
+          <button class="primary-button" type="submit">
+            Вставить устройство
+          </button>
+        </form>
+      </div>
+    </div>
+
     <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
     <script src="html5-qrcode.min.js"></script>
-    <script src="app.js?v=8"></script>
+    <script src="app.js?v=9"></script>
   </body>
 </html>

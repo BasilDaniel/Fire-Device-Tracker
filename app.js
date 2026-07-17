@@ -18,6 +18,7 @@ const state = {
   scanner: null,
   scannerRunning: false,
   highlightTimer: null,
+  insertBeforeDeviceId: null,
   toastTimer: null,
 };
 
@@ -61,6 +62,22 @@ const elements = {
   scannerStatus: document.getElementById("scannerStatus"),
   manualQrInput: document.getElementById("manualQrInput"),
   manualQrSearchButton: document.getElementById("manualQrSearchButton"),
+
+  insertDeviceModal: document.getElementById("insertDeviceModal"),
+
+  closeInsertDeviceButton: document.getElementById("closeInsertDeviceButton"),
+
+  insertDeviceForm: document.getElementById("insertDeviceForm"),
+
+  insertDeviceAddress: document.getElementById("insertDeviceAddress"),
+
+  insertDeviceId: document.getElementById("insertDeviceId"),
+
+  insertDeviceType: document.getElementById("insertDeviceType"),
+
+  insertDeviceDescriptionInput: document.getElementById(
+    "insertDeviceDescriptionInput",
+  ),
 
   toast: document.getElementById("toast"),
 };
@@ -106,6 +123,8 @@ function normalizeStoredDevice(device) {
     description: String(device.description || "").trim(),
     printed: Boolean(device.printed),
     installed: Boolean(device.installed),
+    manual: Boolean(device.manual),
+    addressOverride: Boolean(device.addressOverride),
   };
 }
 
@@ -129,6 +148,233 @@ function getDeviceLoop(address) {
   const match = normalizedAddress.match(/^[^.]+\.(\d+)\./);
 
   return match ? match[1] : "";
+}
+
+function parseDeviceAddress(address) {
+  const normalizedAddress = String(address || "").trim();
+
+  const match = normalizedAddress.match(/^(.*\.)(\d+)$/);
+
+  if (!match) {
+    return null;
+  }
+
+  return {
+    prefix: match[1],
+    number: Number(match[2]),
+    numberText: match[2],
+    width: match[2].length,
+  };
+}
+
+function formatDeviceAddress(prefix, number, width) {
+  return prefix + String(number).padStart(width, "0");
+}
+
+function openInsertDeviceModal(deviceId) {
+  const targetDevice = state.devices.find(
+    (device) => device.deviceId === deviceId,
+  );
+
+  if (!targetDevice) {
+    showToast("Устройство не найдено", "error");
+
+    return;
+  }
+
+  const parsedAddress = parseDeviceAddress(targetDevice.address);
+
+  if (!parsedAddress) {
+    showToast("Невозможно определить номер адреса", "error");
+
+    return;
+  }
+
+  state.insertBeforeDeviceId = deviceId;
+
+  elements.insertDeviceAddress.value = targetDevice.address;
+
+  elements.insertDeviceId.value = "";
+  elements.insertDeviceType.value = targetDevice.deviceType || "";
+
+  elements.insertDeviceDescriptionInput.value = "";
+
+  elements.insertDeviceModal.hidden = false;
+  document.body.classList.add("is-locked");
+
+  requestAnimationFrame(() => {
+    elements.insertDeviceId.focus();
+  });
+}
+
+function closeInsertDeviceModal() {
+  elements.insertDeviceModal.hidden = true;
+  state.insertBeforeDeviceId = null;
+
+  elements.insertDeviceForm.reset();
+
+  document.body.classList.remove("is-locked");
+}
+
+function shiftDeviceAddresses(
+  prefix,
+  fromNumber,
+  delta,
+  excludedDeviceId = "",
+) {
+  const matchingDevices = state.devices
+    .map((device) => {
+      return {
+        device,
+        parsedAddress: parseDeviceAddress(device.address),
+      };
+    })
+    .filter(({ device, parsedAddress }) => {
+      return (
+        device.deviceId !== excludedDeviceId &&
+        parsedAddress &&
+        parsedAddress.prefix === prefix &&
+        parsedAddress.number >= fromNumber
+      );
+    });
+
+  matchingDevices.sort((firstItem, secondItem) => {
+    if (delta > 0) {
+      return secondItem.parsedAddress.number - firstItem.parsedAddress.number;
+    }
+
+    return firstItem.parsedAddress.number - secondItem.parsedAddress.number;
+  });
+
+  matchingDevices.forEach(({ device, parsedAddress }) => {
+    const newNumber = parsedAddress.number + delta;
+
+    if (newNumber < 0) {
+      return;
+    }
+
+    device.address = formatDeviceAddress(
+      parsedAddress.prefix,
+      newNumber,
+      parsedAddress.width,
+    );
+
+    device.addressOverride = true;
+  });
+}
+
+async function insertManualDevice(event) {
+  event.preventDefault();
+
+  const targetDevice = state.devices.find(
+    (device) => device.deviceId === state.insertBeforeDeviceId,
+  );
+
+  if (!targetDevice) {
+    showToast("Выбранное устройство не найдено", "error");
+
+    closeInsertDeviceModal();
+    return;
+  }
+
+  const parsedAddress = parseDeviceAddress(targetDevice.address);
+
+  if (!parsedAddress) {
+    showToast("Некорректный формат адреса", "error");
+
+    return;
+  }
+
+  const deviceId = elements.insertDeviceId.value.trim();
+
+  if (!deviceId) {
+    showToast("Введите Device ID", "error");
+
+    return;
+  }
+
+  const deviceIdExists = state.devices.some(
+    (device) => device.deviceId === deviceId,
+  );
+
+  if (deviceIdExists) {
+    showToast("Устройство с таким Device ID уже существует", "error");
+
+    return;
+  }
+
+  shiftDeviceAddresses(parsedAddress.prefix, parsedAddress.number, 1);
+
+  const newDevice = {
+    address: formatDeviceAddress(
+      parsedAddress.prefix,
+      parsedAddress.number,
+      parsedAddress.width,
+    ),
+
+    deviceId,
+
+    deviceType: elements.insertDeviceType.value.trim(),
+
+    description: elements.insertDeviceDescriptionInput.value.trim(),
+
+    printed: false,
+    installed: false,
+    manual: true,
+    addressOverride: true,
+  };
+
+  state.devices = sortDevices([...state.devices, newDevice]);
+
+  await saveDevices();
+
+  closeInsertDeviceModal();
+
+  state.searchQuery = deviceId;
+  state.activeFilter = "all";
+  state.activeLoop = getDeviceLoop(newDevice.address);
+
+  elements.searchInput.value = deviceId;
+
+  highlightDevice(deviceId);
+
+  showToast(`Устройство вставлено: ${newDevice.address}`, "success");
+}
+
+async function deleteManualDevice(deviceId) {
+  const device = state.devices.find((item) => item.deviceId === deviceId);
+
+  if (!device || !device.manual) {
+    return;
+  }
+
+  const confirmed = window.confirm(
+    `Удалить устройство ${device.address} и сдвинуть следующие адреса назад?`,
+  );
+
+  if (!confirmed) {
+    return;
+  }
+
+  const parsedAddress = parseDeviceAddress(device.address);
+
+  state.devices = state.devices.filter((item) => item.deviceId !== deviceId);
+
+  if (parsedAddress) {
+    shiftDeviceAddresses(
+      parsedAddress.prefix,
+      parsedAddress.number + 1,
+      -1,
+      deviceId,
+    );
+  }
+
+  state.devices = sortDevices(state.devices);
+
+  await saveDevices();
+  render();
+
+  showToast("Устройство удалено, адреса сдвинуты назад", "success");
 }
 
 function escapeHtml(value) {
@@ -381,6 +627,31 @@ function createMobileDeviceCard(device) {
           <span>Installed</span>
         </label>
       </div>
+      <div class="device-card__actions">
+  <button
+    class="secondary-button device-insert-button"
+    type="button"
+    data-action="insert-before"
+    data-device-id="${escapeHtml(device.deviceId)}"
+  >
+    Вставить перед
+  </button>
+
+  ${
+    device.manual
+      ? `
+        <button
+          class="danger-button"
+          type="button"
+          data-action="delete-manual"
+          data-device-id="${escapeHtml(device.deviceId)}"
+        >
+          Удалить
+        </button>
+      `
+      : ""
+  }
+</div>
     </article>
   `;
 }
@@ -439,6 +710,31 @@ function createDesktopDeviceRow(device) {
           >
         </label>
       </td>
+      <td class="device-table__actions">
+  <button
+    class="secondary-button table-action-button"
+    type="button"
+    data-action="insert-before"
+    data-device-id="${escapeHtml(device.deviceId)}"
+  >
+    Вставить перед
+  </button>
+
+  ${
+    device.manual
+      ? `
+        <button
+          class="danger-button table-action-button"
+          type="button"
+          data-action="delete-manual"
+          data-device-id="${escapeHtml(device.deviceId)}"
+        >
+          Удалить
+        </button>
+      `
+      : ""
+  }
+</td>
     </tr>
   `;
 }
@@ -707,6 +1003,8 @@ function createDevicesFromCsvRows(rows) {
         indexMap.installed >= 0
           ? parseBooleanCsvValue(row[indexMap.installed])
           : false,
+      manual: false,
+      addressOverride: false,
     });
   });
 
@@ -1275,6 +1573,37 @@ function handleLoopFilterClick(event) {
   render();
 }
 
+function handleDeviceActionClick(event) {
+  const clickedElement = event.target;
+
+  if (!(clickedElement instanceof Element)) {
+    return;
+  }
+
+  const button = clickedElement.closest("button[data-action][data-device-id]");
+
+  if (!button) {
+    return;
+  }
+
+  const deviceId = button.getAttribute("data-device-id");
+
+  const action = button.getAttribute("data-action");
+
+  if (!deviceId) {
+    return;
+  }
+
+  if (action === "insert-before") {
+    openInsertDeviceModal(deviceId);
+    return;
+  }
+
+  if (action === "delete-manual") {
+    deleteManualDevice(deviceId);
+  }
+}
+
 function bindEvents() {
   elements.searchInput.addEventListener("input", handleSearchInput);
 
@@ -1352,6 +1681,15 @@ function bindEvents() {
       return;
     }
 
+    if (!elements.insertDeviceModal.hidden) {
+      closeInsertDeviceModal();
+      return;
+    }
+
+    if (state.scannerRunning) {
+      stopScanner();
+    }
+
     if (!elements.scannerModal.hidden) {
       closeScanner();
       return;
@@ -1359,6 +1697,26 @@ function bindEvents() {
 
     if (elements.dataMenu.classList.contains("is-open")) {
       closeDataMenu();
+    }
+  });
+
+  elements.mobileDeviceList.addEventListener("click", handleDeviceActionClick);
+
+  elements.desktopDeviceTableBody.addEventListener(
+    "click",
+    handleDeviceActionClick,
+  );
+
+  elements.insertDeviceForm.addEventListener("submit", insertManualDevice);
+
+  elements.closeInsertDeviceButton.addEventListener(
+    "click",
+    closeInsertDeviceModal,
+  );
+
+  elements.insertDeviceModal.addEventListener("click", (event) => {
+    if (event.target === elements.insertDeviceModal) {
+      closeInsertDeviceModal();
     }
   });
 
