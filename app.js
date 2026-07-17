@@ -20,7 +20,10 @@ const state = {
   highlightTimer: null,
   insertBeforeDeviceId: null,
   toastTimer: null,
+  activeCameraId: "",
 };
+
+const LAST_SUCCESSFUL_CAMERA_KEY = "fire-device-tracker-last-successful-camera";
 
 const elements = {
   searchInput: document.getElementById("searchInput"),
@@ -1366,6 +1369,9 @@ async function searchByQrText(qrText) {
 }
 
 async function handleQrScanSuccess(decodedText) {
+  if (state.activeCameraId) {
+    localStorage.setItem(LAST_SUCCESSFUL_CAMERA_KEY, state.activeCameraId);
+  }
   if (!state.scannerRunning) {
     return;
   }
@@ -1385,6 +1391,36 @@ function handleQrScanError() {
   }
 
   elements.scannerStatus.textContent = "Наведите камеру на QR-код";
+}
+
+function selectScannerCamera(cameras) {
+  if (!Array.isArray(cameras) || cameras.length === 0) {
+    return null;
+  }
+
+  const savedCameraId = localStorage.getItem(LAST_SUCCESSFUL_CAMERA_KEY);
+
+  const savedCamera = cameras.find((camera) => camera.id === savedCameraId);
+
+  if (savedCamera) {
+    return savedCamera;
+  }
+
+  const rearCameraPatterns = [
+    /back/i,
+    /rear/i,
+    /environment/i,
+    /задн/i,
+    /основн/i,
+  ];
+
+  const rearCamera = cameras.find((camera) => {
+    return rearCameraPatterns.some((pattern) => {
+      return pattern.test(camera.label || "");
+    });
+  });
+
+  return rearCamera || cameras[cameras.length - 1];
 }
 
 async function startScanner() {
@@ -1409,40 +1445,41 @@ async function startScanner() {
       state.scanner = new Html5Qrcode("qrReader");
     }
 
-    const readerWidth = elements.qrReader.clientWidth || 320;
+    const config = {
+      fps: 12,
 
-    const qrBoxSize = Math.max(180, Math.min(280, readerWidth - 40));
+      qrbox: (viewfinderWidth, viewfinderHeight) => {
+        const shortestSide = Math.min(viewfinderWidth, viewfinderHeight);
+
+        const boxSize = Math.max(
+          140,
+          Math.min(210, Math.floor(shortestSide * 0.48)),
+        );
+
+        return {
+          width: boxSize,
+          height: boxSize,
+        };
+      },
+
+      aspectRatio: 1.777778,
+      disableFlip: false,
+    };
 
     elements.scannerStatus.textContent = "Запрашивается доступ к камере";
 
     const cameras = await Html5Qrcode.getCameras();
+    const selectedCamera = selectScannerCamera(cameras);
 
-    if (!cameras || cameras.length === 0) {
-      throw new Error("Камеры не найдены");
+    if (!selectedCamera) {
+      throw new Error("На устройстве не найдены доступные камеры");
     }
 
-    const rearCamera =
-      cameras.find((camera) => {
-        const label = String(camera.label || "").toLowerCase();
-
-        return (
-          label.includes("back") ||
-          label.includes("rear") ||
-          label.includes("environment") ||
-          label.includes("зад")
-        );
-      }) || cameras[cameras.length - 1];
+    state.activeCameraId = selectedCamera.id;
 
     await state.scanner.start(
-      rearCamera.id,
-      {
-        fps: 10,
-        qrbox: {
-          width: qrBoxSize,
-          height: qrBoxSize,
-        },
-        aspectRatio: 1,
-      },
+      selectedCamera.id,
+      config,
       handleQrScanSuccess,
       handleQrScanError,
     );
